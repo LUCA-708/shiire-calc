@@ -1,0 +1,14 @@
+{
+  "name": "仕入れ判断の計算機",
+  "short_name": "仕入れ計算",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#12141a",
+  "theme_color": "#12141a",
+  "icons": [
+    { "src": "./icon-180.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

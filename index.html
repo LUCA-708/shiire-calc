@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#12141a">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<title>仕入れ判断</title>
+<!--
+  🧮 仕入れ判断の計算機（iPhone 用・1枚もの）
+
+  🔴 外から読み込むものは一切入れない（電波が無い店の中で開くため）。
+     画像・文字の書体・部品の取り寄せ、すべて禁止。
+
+  計算の中身は PC 側の実装をそのまま写している：
+    My_Tools/sedori_base/core/profit.py     … 手数料・手残り・損益分岐
+    My_Tools/sedori_radar/config/fees.json  … ヤフオクの率・送料・商品ランク倍率
+  写しがズレていないかは tests/test_shiire_calc.py が毎回つき合わせている。
+
+  ⚠ 手数料の率は人が直す数字＝必ず古くなる。直したら FEE_CHECKED_ON も一緒に直すこと。
+
+  🔴 このファイルを直したら sw.js の版番号（CACHE = "shiire-vN"）を1つ上げること。
+     上げないと、ネット上に置いた側で iPhone が古い控えを出し続ける。
+-->
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:#12141a;color:#e9ecf3}
+body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Meiryo",sans-serif;
+     padding:14px 14px calc(18px + env(safe-area-inset-bottom));max-width:460px;margin:0 auto;
+     font-size:16px;-webkit-text-size-adjust:100%}
+h1{font-size:17px;font-weight:bold;margin:2px 0 12px;text-align:center}
+
+/* 販売先のタブ */
+.tabs{display:flex;gap:6px;margin-bottom:14px}
+.tab{flex:1;text-align:center;padding:11px 0;border-radius:10px;background:#232836;color:#aab2c4;
+     font-size:14px;border:2px solid transparent;cursor:pointer;user-select:none}
+.tab[aria-selected="true"]{background:#2b4a7a;color:#fff;border-color:#5b8fd6;font-weight:bold}
+
+/* 入力欄 */
+.row{margin-bottom:11px}
+.lab{font-size:12px;color:#9aa3b5;margin-bottom:4px;display:flex;justify-content:space-between;align-items:baseline}
+.mem{color:#c79a3a;font-size:11px}
+input[type=number],input[type=text]{width:100%;background:#1e2330;border:2px solid #333a4a;border-radius:10px;
+     padding:12px;font-size:20px;color:#fff;font-family:inherit}
+input:focus{outline:none;border-color:#5b8fd6}
+input.missing{border-color:#e05561}
+.chips{display:flex;gap:6px;margin-top:6px}
+.chip{flex:1;text-align:center;background:#232836;border:2px solid #2c3243;border-radius:9px;
+      padding:8px 0;font-size:12px;color:#c2cad9;cursor:pointer;user-select:none}
+.chip[aria-pressed="true"]{background:#3a2f1a;border-color:#c79a3a;color:#ffd479}
+.hidden{display:none !important}
+
+/* 商品ランク（折りたたみ） */
+details{background:#1b1f2b;border:1px dashed #4a5468;border-radius:10px;margin-bottom:12px}
+summary{padding:10px 12px;font-size:12px;color:#9aa3b5;cursor:pointer;list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▸ ";color:#c79a3a}
+details[open] summary::before{content:"▾ "}
+.ranks{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 10px}
+.ranks .chip{flex:0 0 calc(25% - 5px)}
+
+/* 未入力の注意 */
+.warn{background:#2c1618;border:2px solid #e05561;border-radius:12px;padding:12px;
+      margin-top:12px;font-size:14px;color:#ffb3b3;line-height:1.6}
+
+/* 結果 */
+.res{background:#132a1f;border:2px solid #2ecc71;border-radius:14px;padding:14px;margin-top:12px}
+.res.bad{background:#2c1618;border-color:#e05561}
+.badge{display:inline-block;background:#2ecc71;color:#08210f;font-weight:bold;border-radius:999px;
+       padding:3px 12px;font-size:13px}
+.res.bad .badge{background:#e05561;color:#2a0c0f}
+.big{font-size:30px;font-weight:bold;color:#7ff0a8;margin-top:6px}
+.res.bad .big{color:#ff8b95}
+.sm{font-size:13px;color:#b9c2d2;margin-top:3px}
+.sm2{font-size:11.5px;color:#8a93a5;margin-top:2px}
+
+/* 買っていい上限 */
+.limit{margin-top:12px;background:#1b2230;border:2px solid #4a6fa5;border-radius:12px;padding:12px}
+.limit .n{font-size:26px;font-weight:bold;color:#ffd479}
+.limit .ng{font-size:17px;font-weight:bold;color:#ff8b95;line-height:1.5}
+
+/* PC へ送る */
+.send{margin-top:12px}
+.btn{width:100%;background:#2b3a5a;border:2px solid #5b8fd6;border-radius:11px;padding:13px;
+     font-size:15px;color:#cfe0ff;font-family:inherit;cursor:pointer}
+.btn:active{background:#35486e}
+.btn:disabled{opacity:.55}
+.msg{margin-top:8px;font-size:13px;border-radius:9px;padding:10px;line-height:1.6}
+.msg.ok{background:#143d2b;border:1px solid #2ecc71;color:#a8e6b8}
+.msg.ng{background:#2c1618;border:1px solid #e05561;color:#ffb3b3}
+.setup{margin-top:8px;background:#1b1f2b;border:1px dashed #4a5468;border-radius:10px;padding:10px}
+.setup p{margin:0 0 7px;font-size:12px;color:#9aa3b5;line-height:1.6}
+
+.foot{margin-top:14px;text-align:center;font-size:10.5px;color:#697182;line-height:1.6}
+.offstate{font-size:12px;margin-bottom:6px;color:#697182}
+.offstate.ok{color:#5fd39a}
+.offstate.wait{color:#d8a44a}
+</style>
+</head>
+<body>
+
+<h1>🧮 仕入れ判断</h1>
+
+<div class="tabs" role="tablist" id="tabs">
+  <div class="tab" role="tab" data-plat="amazon"  aria-selected="true">Amazon</div>
+  <div class="tab" role="tab" data-plat="yahoo"   aria-selected="false">ヤフオク</div>
+  <div class="tab" role="tab" data-plat="mercari" aria-selected="false">メルカリ</div>
+</div>
+
+<div class="row">
+  <div class="lab"><span>① 店の値札（仕入値）</span></div>
+  <input id="cost" type="number" inputmode="numeric" placeholder="例：3980">
+</div>
+
+<div class="row">
+  <div class="lab"><span>② 売れそうな値段</span></div>
+  <input id="sell" type="number" inputmode="numeric" placeholder="例：8860">
+</div>
+
+<div class="row">
+  <div class="lab"><span>③ 送料・梱包</span><span class="mem">🔸覚える</span></div>
+  <input id="ship" type="number" inputmode="numeric" placeholder="例：1500">
+  <div class="chips" id="shipChips">
+    <div class="chip" data-v="800">小 800</div>
+    <div class="chip" data-v="1500">中 1,500</div>
+    <div class="chip" data-v="3000">大 3,000</div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="lab"><span>④ 手数料の率（％）</span><span class="mem">🔸覚える</span></div>
+  <input id="rate" type="number" inputmode="decimal" step="0.1" placeholder="例：15.4">
+  <div class="chips" id="rateChips"></div>
+</div>
+
+<div class="row" id="fbaRow">
+  <div class="lab"><span>⑤ FBA 配送代行料</span></div>
+  <input id="fba" type="number" inputmode="numeric" placeholder="例：1020">
+</div>
+
+<details id="rankBox">
+  <summary>中古で買うとき（商品ランク）　<span id="rankNow" style="color:#ffd479">A 1.00</span></summary>
+  <div class="ranks" id="rankChips"></div>
+</details>
+
+<div id="warn" class="warn hidden"></div>
+<div id="res" class="res hidden"></div>
+<div id="limit" class="limit hidden"></div>
+
+<div class="send hidden" id="sendBox">
+  <input id="memo" type="text" placeholder="商品名（送るときの目印）">
+  <button class="btn" id="sendBtn" style="margin-top:8px">📤 この品を PC へ送る</button>
+  <div id="sendMsg"></div>
+  <div class="setup hidden" id="setupBox">
+    <p>送り先がまだ設定されていません。Discord の「タスク」チャンネルで作った<b>ウェブフックのあて先</b>を1回だけ貼ってください（この iPhone の中だけに残ります）。</p>
+    <input id="hook" type="text" placeholder="https://discord.com/api/webhooks/...">
+    <button class="btn" id="hookSave" style="margin-top:8px">保存する</button>
+  </div>
+</div>
+
+<div class="foot">
+  <div id="offlineState" class="offstate">　</div>
+  手数料の率は <span id="checkedOn"></span> に公式で確認<br>
+  Amazon はカテゴリと価格で 5〜15.4% に変わります。率は自分で確かめて入れてください。
+</div>
+
+<script>
+"use strict";
+
+// ===CALC-START===
+// 🔴 ここから下の「計算だけの部分」は PC 側 sedori_base/core/profit.py の写し。
+//    tests/test_shiire_calc.py が node で動かして Python と1円単位で突き合わせる。
+//    DOM（画面）には一切触らないこと＝触ると突き合わせができなくなる。
+//
+//    profit.py の原則をそのまま守る：
+//      ・手数料は切り上げ／手残りは切り捨て（実際より儲かって見える方向に倒さない）
+//      ・値が無いときは 0 でなく null（0 は「手数料ゼロ＝儲かる」に化けて静かに間違える）
+
+/** 紹介料（販売手数料）の金額。minFee は Amazon の最低手数料 30 円（他は 0）。 */
+function referralFee(sellPrice, ratePct, minFee) {
+  if (!isNum(sellPrice) || sellPrice <= 0) return null;
+  if (!isNum(ratePct)) return null;
+  if (ratePct < 0 || ratePct > 100) return null;   // 率としてありえない値は「無い」扱い
+  var fee = Math.ceil(sellPrice * ratePct / 100);
+  return Math.max(fee, isNum(minFee) ? minFee : 0);
+}
+
+/** 売れたときに引かれる合計（紹介料＋FBA配送代行＋送料・梱包）。 */
+function totalFees(sellPrice, ratePct, fbaFee, shipCost, minFee) {
+  var ref = referralFee(sellPrice, ratePct, minFee);
+  if (ref === null || !isNum(fbaFee)) return null;
+  return ref + Math.trunc(fbaFee) + Math.max(0, isNum(shipCost) ? Math.trunc(shipCost) : 0);
+}
+
+/** 手残り（売値 − 手数料 − 仕入れ値）。赤字はマイナスで返す。 */
+function netProfit(sellPrice, cost, ratePct, fbaFee, shipCost, minFee) {
+  var fees = totalFees(sellPrice, ratePct, fbaFee, shipCost, minFee);
+  if (fees === null) return null;
+  return Math.trunc(sellPrice) - fees - Math.max(0, isNum(cost) ? Math.trunc(cost) : 0);
+}
+
+/** 利益率（手残り ÷ 売値 × 100）＝Amazon の見方・sedori_base と同じ。 */
+function profitRate(sellPrice, cost, ratePct, fbaFee, shipCost, minFee) {
+  var p = netProfit(sellPrice, cost, ratePct, fbaFee, shipCost, minFee);
+  if (p === null || !sellPrice) return null;
+  return p / Math.trunc(sellPrice) * 100;
+}
+
+/** 元手に対する割合（手残り ÷（仕入値＋送料）×100）＝sedori_radar の見方。 */
+function roiRate(sellPrice, cost, ratePct, fbaFee, shipCost, minFee) {
+  var p = netProfit(sellPrice, cost, ratePct, fbaFee, shipCost, minFee);
+  if (p === null) return null;
+  var moto = Math.max(0, isNum(cost) ? Math.trunc(cost) : 0)
+           + Math.max(0, isNum(shipCost) ? Math.trunc(shipCost) : 0);
+  if (moto <= 0) return null;          // 元手ゼロは割れない（0 を返すと「儲け無し」に化ける）
+  return p / moto * 100;
+}
+
+/** 「この値段以下で買えば目標の利益率が残る」仕入れ値。買えないときは null（0 を返さない）。 */
+function breakEvenCost(sellPrice, ratePct, fbaFee, shipCost, targetRate, minFee) {
+  var fees = totalFees(sellPrice, ratePct, fbaFee, shipCost, minFee);
+  if (fees === null) return null;
+  var want = Math.trunc(sellPrice) * Math.max(0, isNum(targetRate) ? targetRate : 0) / 100;
+  var limit = Math.floor(Math.trunc(sellPrice) - fees - want);
+  return limit > 0 ? limit : null;
+}
+
+/** 商品ランクを掛けたあとの売値（切り捨て＝高く見積もらない）。 */
+function adjustedSell(sellPrice, multiplier) {
+  if (!isNum(sellPrice)) return null;
+  var m = isNum(multiplier) ? multiplier : 1;
+  return Math.floor(Math.trunc(sellPrice) * m);
+}
+
+/** 入力の不備を調べる。{missing: 未入力の欄名, minus: 0以下が入った欄名}
+ *  🔴 画面側でなくここに置く＝テストが届くようにするため
+ *     （2026-09-14 にわざと壊したら、画面側の判定は誰も測っていなかった）。
+ *  needFba が false のとき（メルカリ・ヤフオク）は FBA 欄を見ない。
+ */
+function invalidInputs(v) {
+  var FIELDS = [
+    ["cost", "店の値札（仕入値）", false],   // 0円の仕入れはあり得る（自作品）
+    ["sell", "売れそうな値段", true],        // 0円で売ることはない
+    ["ship", "送料・梱包", false],
+    ["rate", "手数料の率", false]
+  ];
+  if (v.needFba) FIELDS.push(["fba", "FBA 配送代行料", false]);
+
+  var missing = [], minus = [];
+  FIELDS.forEach(function (f) {
+    var key = f[0], label = f[1], mustBePositive = f[2], val = v[key];
+    if (val === null || val === undefined) { missing.push(label); return; }
+    if (!isNum(val)) { missing.push(label); return; }
+    if (mustBePositive ? val <= 0 : val < 0) minus.push(label);
+  });
+  return { missing: missing, minus: minus };
+}
+
+/** 商品名に混じる記号を全角に変える（PC へ送る文に入れる前に通す）。
+ *  🔴 Task Desk は受け取った行の **どこにあっても** @ # ! を
+ *     期限・仲間分け・大事さとして読む（task_desk/core/inbox.py:79・87・104・109）。
+ *     「#3 プラモ」のような商品名をそのまま送ると、名前の一部がカテゴリに化けて消える。
+ */
+function safeMemo(s) {
+  return String(s).replace(/[@#!]/g, function (c) {
+    return { "@": "＠", "#": "＃", "!": "！" }[c];
+  });
+}
+
+function isNum(v) { return typeof v === "number" && isFinite(v); }
+// ===CALC-END===
+
+// ── ここから下は画面まわり ──────────────────────────
+
+var FEE_CHECKED_ON = "2026-09-14";   // ⚠ 率を直したらここも直す
+
+var PLATFORMS = {
+  amazon:  { name: "Amazon",   rate: 15.4, chips: [8.4, 10.4, 15.4], fba: true,  minFee: 30 },
+  yahoo:   { name: "ヤフオク", rate: 8.8,  chips: [8.8, 10.0],       fba: false, minFee: 0  },
+  mercari: { name: "メルカリ", rate: 10.0, chips: [10.0],            fba: false, minFee: 0  }
+};
+
+// 商品ランク倍率＝sedori_radar/config/fees.json の condition_multiplier と同じ値
+var RANKS = [
+  { key: "n", label: "新品級", m: 1.10 }, { key: "s", label: "S", m: 1.05 },
+  { key: "a", label: "A", m: 1.00 },      { key: "b", label: "B", m: 0.85 },
+  { key: "c", label: "C", m: 0.70 },      { key: "d", label: "D", m: 0.55 },
+  { key: "junk", label: "ジャンク", m: 0.30 }
+];
+
+var TARGETS = [0, 10, 15, 20];
+var STORE_KEY = "shiire_calc_v1";
+
+var el = function (id) { return document.getElementById(id); };
+var state = { plat: "amazon", rank: "a", target: 15 };
+
+// ── 覚えておく4つ（送料・率・目標利益率・タブ）＋送り先 ──────
+// 🔴 仕入値と売値はわざと覚えない（前の品の数字が残ると、それに気づかず判断してしまう）
+function loadSaved() {
+  try {
+    var raw = localStorage.getItem(STORE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) { return {}; }        // 覗けない設定でも動くこと
+}
+function saveSaved(patch) {
+  try {
+    var cur = loadSaved();
+    for (var k in patch) { cur[k] = patch[k]; }
+    localStorage.setItem(STORE_KEY, JSON.stringify(cur));
+  } catch (e) { /* 保存できなくても計算は続ける */ }
+}
+
+function numOf(input) {
+  var s = (input.value || "").trim();
+  if (s === "") return null;
+  var v = Number(s);
+  return isFinite(v) ? v : null;
+}
+
+// ── 画面の組み立て ───────────────────────────────
+function buildRateChips() {
+  var conf = PLATFORMS[state.plat];
+  var box = el("rateChips");
+  box.innerHTML = "";
+  conf.chips.forEach(function (v) {
+    var d = document.createElement("div");
+    d.className = "chip";
+    d.textContent = v.toFixed(1);
+    d.dataset.v = v;
+    d.addEventListener("click", function () {
+      el("rate").value = v;
+      saveRate(v);
+      update();
+    });
+    box.appendChild(d);
+  });
+}
+
+function buildRankChips() {
+  var box = el("rankChips");
+  box.innerHTML = "";
+  RANKS.forEach(function (r) {
+    var d = document.createElement("div");
+    d.className = "chip";
+    d.textContent = r.label;
+    d.dataset.key = r.key;
+    d.addEventListener("click", function () {
+      state.rank = r.key;
+      update();
+    });
+    box.appendChild(d);
+  });
+}
+
+function buildTargetChips(box) {
+  TARGETS.forEach(function (t) {
+    var d = document.createElement("div");
+    d.className = "chip";
+    d.textContent = t + "%";
+    d.setAttribute("aria-pressed", String(t === state.target));
+    d.addEventListener("click", function () {
+      state.target = t;
+      saveSaved({ target: t });
+      update();
+    });
+    box.appendChild(d);
+  });
+}
+
+function saveRate(v) {
+  var saved = loadSaved();
+  var rates = saved.rates || {};
+  rates[state.plat] = v;
+  saveSaved({ rates: rates });
+}
+
+function rankMultiplier() {
+  for (var i = 0; i < RANKS.length; i++) { if (RANKS[i].key === state.rank) return RANKS[i]; }
+  return RANKS[2];
+}
+
+function switchPlatform(plat) {
+  state.plat = plat;
+  saveSaved({ tab: plat });
+  var conf = PLATFORMS[plat];
+
+  Array.prototype.forEach.call(el("tabs").children, function (t) {
+    t.setAttribute("aria-selected", String(t.dataset.plat === plat));
+  });
+
+  // 率はその販売先の覚えている値、無ければ既定
+  var saved = loadSaved();
+  var rates = saved.rates || {};
+  el("rate").value = (rates[plat] !== undefined) ? rates[plat] : conf.rate;
+  buildRateChips();
+
+  // FBA 欄は Amazon のときだけ出す（灰色で残さない）
+  el("fbaRow").classList.toggle("hidden", !conf.fba);
+
+  update();   // 🔴 仕入値・送料・ランクはそのまま残す＝タップ1つで見比べられる
+}
+
+// ── 計算して画面に出す ──────────────────────────
+function update() {
+  var conf = PLATFORMS[state.plat];
+  var cost = numOf(el("cost"));
+  var sellRaw = numOf(el("sell"));
+  var ship = numOf(el("ship"));
+  var rate = numOf(el("rate"));
+  var fba = conf.fba ? numOf(el("fba")) : 0;
+
+  // 商品ランクの表示を合わせる
+  var rank = rankMultiplier();
+  el("rankNow").textContent = rank.label + " " + rank.m.toFixed(2);
+  Array.prototype.forEach.call(el("rankChips").children, function (c) {
+    c.setAttribute("aria-pressed", String(c.dataset.key === state.rank));
+  });
+  Array.prototype.forEach.call(el("shipChips").children, function (c) {
+    c.setAttribute("aria-pressed", String(ship !== null && Number(c.dataset.v) === ship));
+  });
+  Array.prototype.forEach.call(el("rateChips").children, function (c) {
+    c.setAttribute("aria-pressed", String(rate !== null && Number(c.dataset.v) === rate));
+  });
+
+  // 入力の不備（未入力・0以下）を調べる。判定そのものは invalidInputs が持つ
+  var bad0 = invalidInputs({ cost: cost, sell: sellRaw, ship: ship, rate: rate,
+                             fba: fba, needFba: conf.fba });
+  var LABEL_OF = { "店の値札（仕入値）": "cost", "売れそうな値段": "sell",
+                   "送料・梱包": "ship", "手数料の率": "rate", "FBA 配送代行料": "fba" };
+  ["cost", "sell", "ship", "rate", "fba"].forEach(function (id) { mark(id, false); });
+  bad0.missing.concat(bad0.minus).forEach(function (label) { mark(LABEL_OF[label], true); });
+
+  if (bad0.minus.length > 0) {
+    // 「計算できない」でまとめず、直す場所を名指しする
+    el("warn").innerHTML = "⚠️ <b>" + bad0.minus.map(esc).join("・") + "</b> に 0 以下の数字が入っています";
+    show("warn", true); show("res", false); show("limit", false); show("sendBox", false);
+    return;
+  }
+  if (bad0.missing.length > 0) {
+    // 空欄を0として計算しない＝黒字に見えてしまうため
+    el("warn").innerHTML = "⚠️ <b>" + bad0.missing.map(esc).join("・") + "</b> が未入力です<br>"
+      + "結果は出しません（空欄を0として計算すると、黒字に見えてしまうため）";
+    show("warn", true); show("res", false); show("limit", false); show("sendBox", false);
+    return;
+  }
+
+  var sell = adjustedSell(sellRaw, rank.m);
+  var fees = totalFees(sell, rate, fba, ship, conf.minFee);
+  var ref = referralFee(sell, rate, conf.minFee);
+  var profit = netProfit(sell, cost, rate, fba, ship, conf.minFee);
+  var pr = profitRate(sell, cost, rate, fba, ship, conf.minFee);
+  var roi = roiRate(sell, cost, rate, fba, ship, conf.minFee);
+  var limit = breakEvenCost(sell, rate, fba, ship, state.target, conf.minFee);
+
+  if (profit === null || fees === null) {
+    // 率が 0〜100 の外など、計算できない入力
+    el("warn").innerHTML = "⚠️ <b>手数料の率</b> が正しくありません（0〜100 の数字を入れてください）";
+    show("warn", true); show("res", false); show("limit", false); show("sendBox", false);
+    return;
+  }
+  show("warn", false);
+
+  var bad = profit <= 0;
+  var res = el("res");
+  res.className = "res" + (bad ? " bad" : "");
+  var rankNote = (rank.m !== 1) ? ("　※ランク" + esc(rank.label) + "で売値を " + yen(sell) + " 円として計算") : "";
+  res.innerHTML =
+    '<span class="badge">' + (bad ? "見送り" : "買ってよさそう") + "</span>"
+    + '<div class="big">' + (profit >= 0 ? "＋" : "−") + yen(Math.abs(profit)) + " 円</div>"
+    + '<div class="sm">利益率 ' + pr.toFixed(1) + "%（売値のうち手元に残る割合）</div>"
+    + '<div class="sm2">' + (roi === null ? "元手ゼロのため割合は出せません"
+        : "元手 " + yen(cost + ship) + " 円に対して " + roi.toFixed(1) + "%") + "</div>"
+    + '<div class="sm2">引かれるお金 ' + yen(fees) + " 円（手数料 " + yen(ref)
+        + (conf.fba ? "＋FBA " + yen(fba) : "") + "＋送料 " + yen(ship) + "）</div>"
+    + (rankNote ? '<div class="sm2">' + rankNote + "</div>" : "");
+  show("res", true);
+
+  var lim = el("limit");
+  lim.innerHTML =
+    '<div class="lab" style="margin-bottom:6px"><span>いくらまでなら買っていい？（利益率 '
+      + state.target + "% を残す）</span><span class=\"mem\">🔸覚える</span></div>"
+    + (limit === null
+        ? '<div class="ng">買えません（手数料だけで売値を超えます）</div>'
+        : '<div class="n">' + yen(limit) + " 円 まで</div>")
+    + '<div class="chips" id="targetChips"></div>';
+  buildTargetChips(lim.querySelector("#targetChips"));
+  show("limit", true);
+
+  // 黒字のときだけ「PC へ送る」を出す（見送りの品を送っても仕方がない）
+  show("sendBox", !bad);
+  window.__lastSummary = summaryText(cost, sell, profit, pr, conf.name);
+}
+
+function summaryText(cost, sell, profit, pr, platName) {
+  var memo = safeMemo((el("memo").value || "").trim());
+  return "🧮 買う候補" + (memo ? "：" + memo : "")
+    + "（" + platName + "）仕入 " + yen(cost) + "円 ／ 売値 " + yen(sell) + "円 ／ 手残り "
+    + (profit >= 0 ? "+" : "-") + yen(Math.abs(profit)) + "円（" + pr.toFixed(1) + "%）";
+}
+
+function mark(id, on) { el(id).classList.toggle("missing", on); }
+function show(id, on) { el(id).classList.toggle("hidden", !on); }
+function yen(n) { return Math.round(n).toLocaleString("ja-JP"); }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+
+// ── PC へ送る（Discord のウェブフック経由・ここだけ電波が要る）──────
+function looksLikeWebhook(u) {              // task_desk/core/discord_out.py と同じ判定
+  u = (u || "").trim();
+  return u.indexOf("https://") === 0 && u.indexOf("discord") >= 0 && u.indexOf("/webhooks/") >= 0;
+}
+
+function sendMsg(kind, html) {
+  var box = el("sendMsg");
+  box.className = "msg " + kind;
+  box.innerHTML = html;
+}
+
+function doSend() {
+  var url = loadSaved().webhook;
+  if (!looksLikeWebhook(url)) { show("setupBox", true); sendMsg("ng", "先に送り先を設定してください。"); return; }
+
+  var text = window.__lastSummary || "";
+  if (!text) { sendMsg("ng", "計算がまだ終わっていません。"); return; }
+
+  el("sendBtn").disabled = true;
+  sendMsg("ok", "送っています…");
+
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content: text })
+  }).then(function (r) {
+    if (r.ok || r.status === 204) {
+      sendMsg("ok", "✅ 送りました。パソコンの Task Desk に入ります。");
+    } else {
+      failSend("送り先が受け取ってくれませんでした（" + r.status + "）。", text);
+    }
+  }).catch(function () {
+    // 圏外・機内モード・送り先が違う、のどれか。🔴 黙って失敗させない
+    failSend("送れませんでした（電波が無いか、送り先が違います）。", text);
+  }).then(function () {
+    el("sendBtn").disabled = false;
+  });
+}
+
+function failSend(why, text) {
+  sendMsg("ng", "⚠️ " + esc(why) + "<br>下を押すと文をコピーできます。あとで Discord に貼ってください。");
+  var b = document.createElement("button");
+  b.className = "btn";
+  b.style.marginTop = "8px";
+  b.textContent = "📋 文をコピーする";
+  b.addEventListener("click", function () {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(function () { b.textContent = "📋 コピーしました"; });
+    } else {
+      b.textContent = "コピーできませんでした";
+    }
+  });
+  el("sendMsg").appendChild(b);
+}
+
+// ── 起動 ────────────────────────────────────
+function start() {
+  el("checkedOn").textContent = FEE_CHECKED_ON;
+
+  var saved = loadSaved();
+  if (saved.ship !== undefined) el("ship").value = saved.ship;
+  else el("ship").value = 1500;                       // fees.json の default_shipping_size = medium
+  if (saved.target !== undefined) state.target = saved.target;
+
+  buildRankChips();
+
+  Array.prototype.forEach.call(el("tabs").children, function (t) {
+    t.addEventListener("click", function () { switchPlatform(t.dataset.plat); });
+  });
+  Array.prototype.forEach.call(el("shipChips").children, function (c) {
+    c.addEventListener("click", function () {
+      el("ship").value = c.dataset.v;
+      saveSaved({ ship: Number(c.dataset.v) });
+      update();
+    });
+  });
+
+  ["cost", "sell", "ship", "rate", "fba", "memo"].forEach(function (id) {
+    el(id).addEventListener("input", function () {
+      if (id === "ship") saveSaved({ ship: numOf(el("ship")) });
+      if (id === "rate") { var v = numOf(el("rate")); if (v !== null) saveRate(v); }
+      update();
+    });
+  });
+
+  el("sendBtn").addEventListener("click", doSend);
+  el("hookSave").addEventListener("click", function () {
+    var u = (el("hook").value || "").trim();
+    if (!looksLikeWebhook(u)) { sendMsg("ng", "あて先の形が違うようです（https://discord.com/api/webhooks/… の形）。"); return; }
+    saveSaved({ webhook: u });
+    el("hook").value = "";
+    show("setupBox", false);
+    sendMsg("ok", "送り先を覚えました。もう一度「PC へ送る」を押してください。");
+  });
+
+  switchPlatform(saved.tab && PLATFORMS[saved.tab] ? saved.tab : "amazon");
+}
+
+// ── 電波が無くても開けるか（控えの状態を正直に出す）─────────────
+// 🔴 「開けます」と出してよいのは、控えが全部そろった印（sw.js の MARK）を
+//    実際に見つけたときだけ。作れていないのに「開けます」と出さない。
+function offMsg(cls, text) {
+  var e = document.getElementById("offlineState");
+  if (!e) return;
+  e.className = "offstate" + (cls ? " " + cls : "");
+  e.textContent = text;
+}
+
+function setupOffline() {
+  // パソコンでファイルを直に開いたとき（file://）は控えの仕組みが使えない
+  if (location.protocol !== "http:" && location.protocol !== "https:") {
+    offMsg("", "（電波なしで開けるかは、ネット上のアドレスから開くと出ます）");
+    return;
+  }
+  if (!("serviceWorker" in navigator) || !window.caches) {
+    offMsg("wait", "⚠️ このブラウザでは控えを作れません（電波が要ります）");
+    return;
+  }
+
+  var tries = 0;
+  function look() {
+    tries++;
+    caches.match("./__offline_ok").then(function (hit) {
+      if (hit) {
+        return hit.json().then(function (info) {
+          var d = String(info && info.cachedOn ? info.cachedOn : "").replace(/-/g, "/").slice(5);
+          offMsg("ok", "✅ 電波が無くても開けます" + (d ? "（" + d + " 取り込み）" : ""));
+        });
+      }
+      if (tries < 12) { setTimeout(look, 900); return; }
+      offMsg("wait", "⚠️ 控えがまだできていません。電波のある所でもう一度開いてください");
+    }).catch(function () {
+      offMsg("wait", "⚠️ 控えの状態を確かめられませんでした");
+    });
+  }
+
+  offMsg("wait", "⏳ 電波が無くても開けるように控えを作っています…");
+  navigator.serviceWorker.register("./sw.js").then(look).catch(function (err) {
+    offMsg("wait", "⚠️ 控えが作れませんでした（" + (err && err.message ? err.message : "理由不明") + "）");
+  });
+}
+
+start();
+setupOffline();
+</script>
+</body>
+</html>
