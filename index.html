@@ -84,6 +84,18 @@ details[open] summary::before{content:"▾ "}
 
 /* PC へ送る */
 .send{margin-top:12px}
+.sfld{margin-top:9px}
+.storeRow{display:flex;gap:6px;align-items:stretch}
+.storeRow input{flex:1;min-width:0}
+/* 個数は1〜2桁しか入らない。狭くして「送る」ボタンを1行ぶん上へ引き上げる */
+.qtyIn{flex:0 0 62px;text-align:center}
+/* 送る前に中身を見せる枠。押してから Discord を開くまで確かめられない、を無くすため */
+.prev{margin-top:9px;background:#0e1016;border:1px solid #2a2f3d;border-radius:9px;padding:8px 10px;
+      font-size:11.5px;color:#b8c2d4;line-height:1.55;word-break:break-all}
+.prevhead{color:#9aa3b5;font-size:10px;margin-bottom:3px}
+.xbtn{flex:0 0 auto;background:#232836;border:2px solid #2c3243;border-radius:10px;
+      padding:0 11px;font-size:12px;color:#9aa3b5;font-family:inherit;cursor:pointer;white-space:nowrap}
+.xbtn:active{background:#2c3243}
 .btn{width:100%;background:#2b3a5a;border:2px solid #5b8fd6;border-radius:11px;padding:13px;
      font-size:15px;color:#cfe0ff;font-family:inherit;cursor:pointer}
 .btn:active{background:#35486e}
@@ -151,7 +163,24 @@ details[open] summary::before{content:"▾ "}
 <div id="limit" class="limit hidden"></div>
 
 <div class="send hidden" id="sendBox">
-  <input id="memo" type="text" placeholder="商品名（送るときの目印）">
+  <div class="lab"><span>商品名</span><span>送るときの目印</span></div>
+  <input id="memo" type="text" placeholder="例：ゲームソフト">
+
+  <div class="sfld">
+    <div class="lab"><span>個数 ／ 店</span><span class="mem">🔸店だけ覚える</span></div>
+    <div class="storeRow">
+      <input id="qty" class="qtyIn" type="number" inputmode="numeric" min="1" step="1" placeholder="1">
+      <!-- 🔴 例示は短くする＝横1列なので幅が狭い（長いと途中で切れて意味をなさない） -->
+      <input id="store" type="text" placeholder="店の名前">
+      <button class="xbtn" id="storeClear" type="button">✕ 店を変える</button>
+    </div>
+  </div>
+
+  <div class="prev">
+    <div class="prevhead">送る中身</div>
+    <div id="previewText"></div>
+  </div>
+
   <button class="btn" id="sendBtn" style="margin-top:8px">📤 この品を PC へ送る</button>
   <div id="sendMsg"></div>
   <div class="setup hidden" id="setupBox">
@@ -271,6 +300,40 @@ function safeMemo(s) {
 }
 
 function isNum(v) { return typeof v === "number" && isFinite(v); }
+
+function yen(n) { return Math.round(n).toLocaleString("ja-JP"); }
+
+/** PC へ送る1行を組み立てる。画面に触らない部分だけをここに置く（テストが node で直接動かす）。
+ *  🔴 商品名と店名の全角化（safeMemo）は **この中で** 済ませる。
+ *     呼ぶ側に任せると、入口が増えたとき片方だけ通し忘れる。
+ *  🔴 ランク・個数・店名は「既定のとき丸ごと出さない」＝要らない字で1行を埋めない。
+ */
+function summaryLine(o) {
+  var memo  = safeMemo(String(o.memo  || "").trim());
+  var store = safeMemo(String(o.store || "").trim());
+  // 🔴 金額は3つとも「1個あたり」。個数を2以上にしたときだけ /個 を付けて誤読を消す
+  //    （合計は出さない＝計算の写しを増やすとPC側とズレる。売れたぶんはプライスターのCSVが運ぶ）
+  var per = (isNum(o.qty) && o.qty >= 2) ? "/個" : "";
+  var s = "📦 出品する" + (memo ? "：" + memo : "")
+    + "（" + o.platName + "）仕入 " + yen(o.cost) + "円" + per + " ／ 売値 " + yen(o.sell) + "円" + per
+    + " ／ 手残り " + (o.profit >= 0 ? "+" : "-") + yen(Math.abs(o.profit)) + "円" + per
+    + "（" + o.profitRate.toFixed(1) + "%）";
+  // 状態＝ランクの倍率が 1.00（＝A）以外のときだけ。画面の rankNote と同じ見せ方に揃える
+  if (isNum(o.rankMul) && o.rankMul !== 1 && o.rankLabel) s += " ／ 状態：" + o.rankLabel;
+  if (isNum(o.qty) && o.qty >= 2) s += " ／ 個数：" + Math.round(o.qty);
+  if (store) s += " ／ 店：" + store;
+  return s;
+}
+
+/** 店名は「その日だけ」覚える。日が変わったら **店名だけ** 忘れる。
+ *  🔴 これが無いと、翌日ちがう店で開いたとき前日の店名が入ったまま送られる
+ *     （✕ボタンだけでは「気づいて押す」必要があり、気づけない）。
+ *  送料・手数料の率・目標利益率・タブの4つはここでは触らない（毎日同じなので覚えたまま）。
+ */
+function storeForToday(saved, today) {
+  if (!saved || !saved.store) return "";
+  return saved.storeDate === today ? String(saved.store) : "";
+}
 // ===CALC-END===
 
 // ── ここから下は画面まわり ──────────────────────────
@@ -297,8 +360,9 @@ var STORE_KEY = "shiire_calc_v1";
 var el = function (id) { return document.getElementById(id); };
 var state = { plat: "amazon", rank: "a", target: 15 };
 
-// ── 覚えておく4つ（送料・率・目標利益率・タブ）＋送り先 ──────
-// 🔴 仕入値と売値はわざと覚えない（前の品の数字が残ると、それに気づかず判断してしまう）
+// ── 覚えておく4つ（送料・率・目標利益率・タブ）＋送り先＋店名（その日だけ）──────
+// 🔴 仕入値と売値と個数はわざと覚えない（前の品の数字が残ると、それに気づかず判断してしまう）
+// 🔴 店名だけは別扱い＝同じ店で何件も判定するので覚える。ただし storeForToday() で日をまたいだら忘れる
 function loadSaved() {
   try {
     var raw = localStorage.getItem(STORE_KEY);
@@ -311,6 +375,13 @@ function saveSaved(patch) {
     for (var k in patch) { cur[k] = patch[k]; }
     localStorage.setItem(STORE_KEY, JSON.stringify(cur));
   } catch (e) { /* 保存できなくても計算は続ける */ }
+}
+
+// 今日の日付（YYYY-MM-DD・その端末の時計で）。店名を「その日だけ」覚えるための鍵
+function todayKey() {
+  var d = new Date();
+  function p(n) { return (n < 10 ? "0" : "") + n; }
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
 }
 
 function numOf(input) {
@@ -492,18 +563,24 @@ function update() {
   // 黒字のときだけ「PC へ送る」を出す（見送りの品を送っても仕方がない）
   show("sendBox", !bad);
   window.__lastSummary = summaryText(cost, sell, profit, pr, conf.name);
+  // 🔴 送る前に中身を見せる。ここと __lastSummary は**必ず同じ文**にする
+  //    （別々に組み立てると、見せた文と送る文が静かにズレる）
+  //    textContent で入れる＝店名に < > が入っても画面が壊れない
+  el("previewText").textContent = window.__lastSummary;
 }
 
+// 画面から値を集めて summaryLine() に渡すだけ（組み立ての中身は CALC 側にある）
 function summaryText(cost, sell, profit, pr, platName) {
-  var memo = safeMemo((el("memo").value || "").trim());
-  return "🧮 買う候補" + (memo ? "：" + memo : "")
-    + "（" + platName + "）仕入 " + yen(cost) + "円 ／ 売値 " + yen(sell) + "円 ／ 手残り "
-    + (profit >= 0 ? "+" : "-") + yen(Math.abs(profit)) + "円（" + pr.toFixed(1) + "%）";
+  var rank = rankMultiplier();
+  return summaryLine({
+    memo: el("memo").value, store: el("store").value, qty: numOf(el("qty")),
+    cost: cost, sell: sell, profit: profit, profitRate: pr, platName: platName,
+    rankMul: rank.m, rankLabel: rank.label
+  });
 }
 
 function mark(id, on) { el(id).classList.toggle("missing", on); }
 function show(id, on) { el(id).classList.toggle("hidden", !on); }
-function yen(n) { return Math.round(n).toLocaleString("ja-JP"); }
 function esc(s) {
   return String(s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -575,6 +652,11 @@ function start() {
   else el("ship").value = 1500;                       // fees.json の default_shipping_size = medium
   if (saved.target !== undefined) state.target = saved.target;
 
+  // 店名＝その日だけ覚える。日が変わっていたら画面にも保存にも残さない
+  var store = storeForToday(saved, todayKey());
+  el("store").value = store;
+  if (!store && saved.store) saveSaved({ store: "", storeDate: "" });
+
   buildRankChips();
 
   Array.prototype.forEach.call(el("tabs").children, function (t) {
@@ -588,12 +670,20 @@ function start() {
     });
   });
 
-  ["cost", "sell", "ship", "rate", "fba", "memo"].forEach(function (id) {
+  ["cost", "sell", "ship", "rate", "fba", "memo", "qty", "store"].forEach(function (id) {
     el(id).addEventListener("input", function () {
       if (id === "ship") saveSaved({ ship: numOf(el("ship")) });
       if (id === "rate") { var v = numOf(el("rate")); if (v !== null) saveRate(v); }
+      // 🔴 個数は覚えない（品ごとに変わる＝仕入値・売値を覚えないのと同じ理由）
+      if (id === "store") saveSaved({ store: el("store").value, storeDate: todayKey() });
       update();
     });
+  });
+
+  el("storeClear").addEventListener("click", function () {
+    el("store").value = "";
+    saveSaved({ store: "", storeDate: "" });
+    update();
   });
 
   el("sendBtn").addEventListener("click", doSend);
