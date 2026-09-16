@@ -110,10 +110,38 @@ details[open] summary::before{content:"▾ "}
 .offstate{font-size:12px;margin-bottom:6px;color:#697182}
 .offstate.ok{color:#5fd39a}
 .offstate.wait{color:#d8a44a}
+
+/* 💴 経費メモ（2026-09-17）。ページの切り替えタブは既存 .tab の見た目に合わせる */
+.ptabs{display:flex;gap:6px;margin-bottom:10px}
+.ptab{flex:1;text-align:center;padding:11px 0;border-radius:10px;background:#232836;color:#aab2c4;
+      font-size:14px;border:2px solid transparent;cursor:pointer;user-select:none;position:relative}
+.ptab[aria-selected="true"]{background:#2b4a7a;color:#fff;border-color:#5b8fd6;font-weight:bold}
+.pbadge{position:absolute;top:-7px;right:6px;background:#8c2f28;color:#fff;font-size:10px;
+        border-radius:9px;padding:1px 6px;font-weight:bold}
+.expcats{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+.expcats .chip{flex:none;padding:8px 10px}
+.explist{background:#1b1f2b;border:1px solid #2c3243;border-radius:10px;padding:10px;margin-top:12px;font-size:13px}
+.expit{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px dashed #2c3243;color:#c2cad9}
+.expit:last-child{border-bottom:none}
+.expit.sent{color:#6b7484}
+.expit .del{color:#8a94a8;padding:0 4px;cursor:pointer}
+.expsum{display:flex;justify-content:space-between;margin-top:8px;font-weight:bold;color:#ffd479}
+.expwarn{background:#3a2f1a;border:1px solid #c79a3a;border-radius:8px;padding:8px;
+         font-size:12px;color:#ffd479;margin-top:10px}
+.fallback{width:100%;height:110px;background:#0f1218;border:1px solid #2c3243;border-radius:8px;
+          color:#c2cad9;font-size:11px;padding:8px;font-family:ui-monospace,Menlo,monospace;margin-top:8px}
 </style>
 </head>
 <body>
 
+<div class="ptabs" role="tablist" id="pageTabs">
+  <div class="ptab" role="tab" data-page="calc" aria-selected="true">🧮 仕入れ判断</div>
+  <!-- 🔴 未コピーの印は「経費」タブ側に付ける。2枚のタブはどちらの画面でも見えているので、
+       計算機タブに付けても気づきやすさは変わらず、何の件数か分からなくなるだけ（2026-09-17 修正） -->
+  <div class="ptab" role="tab" data-page="exp"  aria-selected="false">💴 経費<span class="pbadge hidden" id="expBadge"></span></div>
+</div>
+
+<div id="pageCalc">
 <h1>🧮 仕入れ判断</h1>
 
 <div class="tabs" role="tablist" id="tabs">
@@ -195,6 +223,57 @@ details[open] summary::before{content:"▾ "}
   手数料の率は <span id="checkedOn"></span> に公式で確認<br>
   Amazon はカテゴリと価格で 5〜15.4% に変わります。率は自分で確かめて入れてください。
 </div>
+</div><!-- /#pageCalc -->
+
+<div id="pageExp" class="hidden">
+<h1>💴 経費メモ</h1>
+
+<div class="row">
+  <div class="lab"><span>金額</span><span>必須</span></div>
+  <input id="expAmount" type="number" inputmode="numeric" placeholder="例：1200">
+</div>
+
+<div class="row">
+  <div class="lab"><span>費目</span><span>台帳と同じ名前</span></div>
+  <div class="expcats" id="expCats"></div>
+  <div class="expcats hidden" id="expCatsMore"></div>
+</div>
+
+<div class="row">
+  <div class="lab"><span>メモ（どこで・何に）</span><span>任意</span></div>
+  <input id="expMemo" type="text" placeholder="例：セカスト三島店まで 電車代">
+</div>
+
+<div class="row">
+  <div class="lab"><span>日付</span><span>ふだんは触らない</span></div>
+  <div class="storeRow">
+    <input id="expDate" type="text" readonly>
+    <button class="xbtn" id="expPrevDay" type="button">◀ 前日</button>
+    <button class="xbtn hidden" id="expToday" type="button">↺ 今日</button>
+  </div>
+</div>
+
+<div id="expErr" class="msg hidden"></div>
+<button class="btn" id="expAdd">＋ この1件を控える</button>
+
+<div id="expWarns"></div>
+
+<div class="explist" id="expListBox">
+  <div class="lab"><span>控え（新しい順）</span><span id="expCount"></span></div>
+  <div id="expList"></div>
+  <div class="expsum" id="expSum"></div>
+</div>
+
+<button class="btn" id="expCopy" style="margin-top:10px">📋 未コピーぶんをコピーする</button>
+<div id="expCopyMsg" class="msg hidden"></div>
+<textarea class="fallback hidden" id="expFallback" readonly></textarea>
+
+<div class="foot">
+  ✅済は「<b>渡した印</b>」であって「台帳に入った印」ではありません<br>
+  （この iPhone からは、PC が取り込んだかどうかは分かりません）<br>
+  貼り付け先＝パソコンの sales_manager「経費を貼り付けて取り込む」
+</div>
+</div><!-- /#pageExp -->
 
 <script>
 "use strict";
@@ -334,6 +413,116 @@ function storeForToday(saved, today) {
   if (!saved || !saved.store) return "";
   return saved.storeDate === today ? String(saved.store) : "";
 }
+
+// ── 💴 経費メモ（2026-09-17・設計書 plans/keihi_memo_pwa.md）───────────────
+// 🔴 ここは「画面に触らない部分」だけ。テストが node で直接動かす。
+
+// 台帳（sales_manager/ui/expenses.py の _CATEGORY_CHOICES）と**完全に同じ文字**。
+// 🔴 ここがズレると PC 側の取り込みが赤で止まる＝勝手に新しい費目を作らないための綱。
+// 🔴 2026-09-17 に実ファイルから取り直した12個。棚卸減耗損・返品・返金は**候補に無い**
+//    （返品は 2026-09-02 に外された＝売上から直接引く形になったため）。
+// 🔴 「雑収入」だけはこの画面に出さない＝**出ていくお金ではない**（マイナスで入れる項目）。
+//    店で押す道具に混ぜると、符号を間違えたまま台帳へ入る。必要なら PC 側で足す。
+var EXPENSE_CATEGORIES = [
+  "仕入高", "荷造運賃", "通信費", "消耗品費", "支払手数料", "Amazon保管料",
+  "広告宣伝費", "外注費", "地代家賃", "旅費交通費", "雑費"
+];
+// 店で押すのはこの4つ。残りは「ほか」を開いてから選ぶ（2026-09-17 ユーザー判定）
+var EXPENSE_QUICK = ["旅費交通費", "荷造運賃", "消耗品費", "雑費"];
+
+/** 列がずれないように、メモのタブと改行を空白に潰す。
+ *  🔴 safeMemo()（@ # ! の全角化）は **ここでは通さない**。
+ *     あれは Task Desk 向けの作法で、貼り付け先の台帳は記号を食べない
+ *     （通すと台帳のメモが全角だらけになる）。
+ */
+function expenseMemo(s) {
+  return String(s == null ? "" : s).replace(/[\t\r\n]+/g, " ").trim();
+}
+
+/** 鍵＝ p|YYYYMMDD|その日の連番。**iPhone 側で作る**。
+ *  ・往復の電車代（同じ日・同じ金額・同じ費目）も連番が違う＝別物として両方入る
+ *  ・同じ文を2回貼っても鍵が同じ＝二重に入らない（PC 側の dedup_key にそのまま入る）
+ */
+function expenseKey(date, seq, device) {
+  return "p|" + (device || "----") + "|" + String(date).replace(/-/g, "") + "|" + seq;
+}
+
+/** その日の次の連番。**消した行の番号は再利用しない**
+ *  （再利用すると、先に貼った行と鍵がぶつかって片方が「取り込み済み」で消える）。
+ */
+function nextExpenseSeq(items, date, device) {
+  var head = expenseKey(date, "", device);
+  var max = 0;
+  (items || []).forEach(function (it) {
+    if (it && String(it.k).indexOf(head) === 0) {
+      var n = parseInt(String(it.k).slice(head.length), 10);
+      if (isFinite(n) && n > max) max = n;
+    }
+  });
+  return max + 1;
+}
+
+/** 1件＝5列のタブ区切り（日付／金額／費目／メモ／鍵）。 */
+function expenseLine(it) {
+  return [it.d, String(Math.round(it.a)), it.c, expenseMemo(it.m), it.k].join("\t");
+}
+
+/** PC へ渡す文＝**まだ渡していないぶんだけ**を古い順に並べる。 */
+function expenseText(items) {
+  return pendingExpenses(items).slice().sort(function (a, b) {
+    return a.d === b.d ? (a.k < b.k ? -1 : 1) : (a.d < b.d ? -1 : 1);
+  }).map(expenseLine).join("\n");
+}
+
+function pendingExpenses(items) {
+  return (items || []).filter(function (it) { return it && !it.s; });
+}
+
+/** 未渡しに月が2つ以上混ざっているか（先月の帳簿を締めた後に古い経費が入るのを防ぐ）。 */
+function expenseMonths(items) {
+  var seen = [];
+  pendingExpenses(items).forEach(function (it) {
+    var ym = String(it.d).slice(0, 7);
+    if (seen.indexOf(ym) < 0) seen.push(ym);
+  });
+  return seen.sort();
+}
+
+/** 一番古い未渡しの日付（無ければ ""）。放置に気づくための数字。 */
+function oldestPending(items) {
+  var ds = pendingExpenses(items).map(function (it) { return it.d; }).sort();
+  return ds.length ? ds[0] : "";
+}
+
+/** 掃除＝**渡した印が付いていて、かつ3か月より古いもの**だけ捨てる。
+ *  🔴 未渡しは何年前でも絶対に消さない（消えたら記録そのものが消える）。
+ */
+function pruneExpenses(items, today) {
+  var limit = shiftDate(today, -92);
+  return (items || []).filter(function (it) {
+    if (!it) return false;
+    if (!it.s) return true;
+    return String(it.d) >= limit;
+  });
+}
+
+/** 日付を n 日ずらす（YYYY-MM-DD → YYYY-MM-DD）。月またぎ・年またぎは Date に任せる。 */
+function shiftDate(date, n) {
+  var p = String(date).split("-");
+  var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+  d.setDate(d.getDate() + n);
+  function z(x) { return (x < 10 ? "0" : "") + x; }
+  return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
+}
+
+/** 入れてよい1件か。→ 悪ければ理由（日本語）、良ければ "" */
+function expenseProblem(amount, category) {
+  if (!isNum(amount) || amount === 0) return "金額を入れてください";
+  if (amount < 0) return "金額はプラスで入れてください（返金は台帳側で直します）";
+  if (EXPENSE_CATEGORIES.indexOf(category) < 0) return "費目を選んでください";
+  return "";
+}
+
 // ===CALC-END===
 
 // ── ここから下は画面まわり ──────────────────────────
@@ -643,6 +832,279 @@ function failSend(why, text) {
   el("sendMsg").appendChild(b);
 }
 
+// ── 💴 経費メモ（画面まわり）─────────────────────────
+// 🔴 控えは設定とは**別の箱**に入れる（設定が壊れても記録が巻き添えにならない）
+var EXP_KEY = "shiire_calc_exp_v1";
+var expState = { cat: "", date: "", more: false, armed: "" };
+
+function loadExpenses() {
+  try {
+    var raw = localStorage.getItem(EXP_KEY);
+    var a = raw ? JSON.parse(raw) : [];
+    return Object.prototype.toString.call(a) === "[object Array]" ? a : [];
+  } catch (e) { return []; }
+}
+/** 控えを保存する。→ 保存できたか（true/false）
+ *  🔴 黙って失敗させない。保管庫が満杯・覗けない設定のとき、
+ *     「控えたのに何も起きない」＝一番気づけない壊れ方になる。書いたら**読み直して**確かめる。
+ */
+function saveExpenses(items) {
+  try {
+    localStorage.setItem(EXP_KEY, JSON.stringify(items));
+    return loadExpenses().length === items.length;
+  } catch (e) { return false; }
+}
+
+/** この端末の印（4文字）。**鍵がぶつからないようにするためだけ**のもの。
+ *  🔴 これが無いと、2台目（iPad など）で作った鍵が1台目と同じになり、
+ *     PC 側が「取り込み済み」として**別の経費を静かに省く**（気づく手立てがない）。
+ */
+function deviceId() {
+  var saved = loadSaved();
+  if (saved.device && String(saved.device).length === 4) return saved.device;
+  var id = Math.random().toString(36).slice(2, 6);
+  saveSaved({ device: id });
+  return id;
+}
+
+function switchPage(page) {
+  Array.prototype.forEach.call(el("pageTabs").children, function (t) {
+    t.setAttribute("aria-selected", t.dataset.page === page ? "true" : "false");
+  });
+  show("pageCalc", page === "calc");
+  show("pageExp", page === "exp");
+  saveSaved({ page: page });
+  window.scrollTo(0, 0);
+}
+
+function buildExpCats() {
+  var quick = el("expCats"), more = el("expCatsMore");
+  quick.innerHTML = ""; more.innerHTML = "";
+  EXPENSE_QUICK.forEach(function (c) { quick.appendChild(catChip(c)); });
+  var other = document.createElement("div");
+  other.className = "chip";
+  other.textContent = "…ほか";
+  other.addEventListener("click", function () {
+    expState.more = !expState.more;
+    show("expCatsMore", expState.more);
+  });
+  quick.appendChild(other);
+  EXPENSE_CATEGORIES.forEach(function (c) {
+    if (EXPENSE_QUICK.indexOf(c) < 0) more.appendChild(catChip(c));
+  });
+}
+function catChip(name) {
+  var d = document.createElement("div");
+  d.className = "chip";
+  d.textContent = name;
+  d.setAttribute("aria-pressed", "false");
+  d.addEventListener("click", function () {
+    expState.cat = name;
+    paintExpCats();
+  });
+  return d;
+}
+function paintExpCats() {
+  ["expCats", "expCatsMore"].forEach(function (id) {
+    Array.prototype.forEach.call(el(id).children, function (c) {
+      if (c.textContent === "…ほか") return;
+      c.setAttribute("aria-pressed", c.textContent === expState.cat ? "true" : "false");
+    });
+  });
+}
+
+function setExpDate(d) {
+  expState.date = d;
+  var today = todayKey();
+  el("expDate").value = d + (d === today ? "（今日）" : "");
+  show("expToday", d !== today);
+}
+
+function addExpense() {
+  var amount = numOf(el("expAmount"));
+  var problem = expenseProblem(amount, expState.cat);
+  if (problem) { expErr(problem); return; }
+  show("expErr", false);
+
+  var items = loadExpenses();
+  var dev = deviceId();
+  items.push({
+    d: expState.date,
+    a: Math.round(amount),
+    c: expState.cat,
+    m: expenseMemo(el("expMemo").value),
+    k: expenseKey(expState.date, nextExpenseSeq(items, expState.date, dev), dev),
+    s: ""
+  });
+  if (!saveExpenses(items)) {
+    expErr("この iPhone に控えを保存できませんでした。空き容量を確かめてください（まだ記録できていません）。");
+    return;
+  }
+  // 入れた品の値は残さない（次の1件と混ざる＝計算機が仕入値を覚えないのと同じ理由）
+  el("expAmount").value = "";
+  el("expMemo").value = "";
+  setExpDate(todayKey());
+  show("expCopyMsg", false);
+  show("expFallback", false);
+  renderExpenses();
+}
+
+function expErr(msg) {
+  var box = el("expErr");
+  box.className = "msg ng";
+  box.textContent = msg;
+  show("expErr", true);
+  el("expAmount").classList.toggle("missing", msg.indexOf("金額") === 0);
+}
+
+function removeExpense(key) {
+  expState.armed = "";
+  var items = loadExpenses().filter(function (it) { return it.k !== key; });
+  saveExpenses(items);
+  renderExpenses();
+}
+
+function renderExpenses() {
+  var items = loadExpenses();
+  var pending = pendingExpenses(items);
+  var list = el("expList");
+  list.innerHTML = "";
+
+  items.slice().sort(function (a, b) {
+    return a.d === b.d ? (a.k < b.k ? 1 : -1) : (a.d < b.d ? 1 : -1);
+  }).forEach(function (it) {
+    var row = document.createElement("div");
+    row.className = "expit" + (it.s ? " sent" : "");
+    var left = document.createElement("span");
+    left.textContent = (it.s ? "✅済 " : "") + it.c + (it.m ? " ／ " + it.m : "")
+      + (it.d === todayKey() ? "" : "（" + it.d.slice(5) + "）");
+    var right = document.createElement("span");
+    right.textContent = yen(it.a) + "円";
+    // 🔴 一発で消さない＝店での誤タップで記録が消える。
+    //    ブラウザの確認ダイアログは使えない（出すと操作が止まる）ので**2度押し**にする。
+    var del = document.createElement("span");
+    del.className = "del";
+    del.textContent = "✕";
+    del.addEventListener("click", function () {
+      if (expState.armed === it.k) { removeExpense(it.k); return; }
+      expState.armed = it.k;
+      del.textContent = "もう一度で消す";
+      del.style.color = "#ff8189";
+      setTimeout(function () {
+        if (expState.armed !== it.k) return;
+        expState.armed = "";
+        del.textContent = "✕";
+        del.style.color = "";
+      }, 4000);
+    });
+    right.appendChild(del);
+    row.appendChild(left);
+    row.appendChild(right);
+    list.appendChild(row);
+  });
+
+  var sum = 0;
+  pending.forEach(function (it) { sum += it.a; });
+  el("expCount").textContent = items.length ? items.length + "件" : "";
+  el("expSum").innerHTML = "";
+  var l = document.createElement("span");
+  l.textContent = "未コピー " + pending.length + "件";
+  var r = document.createElement("span");
+  r.textContent = yen(sum) + "円";
+  el("expSum").appendChild(l);
+  el("expSum").appendChild(r);
+  show("expListBox", items.length > 0);
+
+  // 警告＝月またぎ／放置（どちらも「気づけない」を潰すためのもの）
+  var warns = el("expWarns");
+  warns.innerHTML = "";
+  var months = expenseMonths(items);
+  if (months.length >= 2) {
+    addWarn(warns, months.map(function (m) { return m.replace("-", "年") + "月"; }).join("・") + " が混ざっています");
+  }
+  var oldest = oldestPending(items);
+  if (oldest) {
+    var days = Math.round((new Date(todayKey()) - new Date(oldest)) / 86400000);
+    if (days >= 2) addWarn(warns, "一番古い未コピー＝" + oldest.slice(5) + "（" + days + "日前）");
+  }
+
+  var badge = el("expBadge");
+  badge.textContent = String(pending.length);
+  show("expBadge", pending.length > 0);
+  el("expCopy").textContent = pending.length
+    ? "📋 未コピー" + pending.length + "件をコピーする" : "📋 コピーするものはありません";
+}
+
+function addWarn(box, text) {
+  var d = document.createElement("div");
+  d.className = "expwarn";
+  d.textContent = text;
+  box.appendChild(d);
+}
+
+function copyExpenses() {
+  var items = loadExpenses();
+  var text = expenseText(items);
+  if (!text) { copyMsg("ng", "まだコピーするものがありません。"); return; }
+
+  function markCopied() {
+    var now = new Date().toISOString();
+    var updated = loadExpenses().map(function (it) {
+      if (!it.s) it.s = now;
+      return it;
+    });
+    saveExpenses(updated);
+    renderExpenses();
+    copyMsg("ok", "✅ コピーしました。パソコンの sales_manager に貼ってください。"
+      + "（✅済＝渡した印です。台帳に入ったかは PC 側で確かめてください）");
+  }
+  // 🔴 コピーできないときは黙らない＝同じ文を枠に出して、手で選べるようにする
+  //    （計算機の「送れませんでした」と同じ作法）
+  function fallback() {
+    el("expFallback").value = text;
+    show("expFallback", true);
+    copyMsg("ng", "自動でコピーできませんでした。下の枠の文を長押しして選び、コピーしてください。"
+      + "（控えはそのまま残してあります）");
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(markCopied, fallback);
+    } else { fallback(); }
+  } catch (e) { fallback(); }
+}
+
+function copyMsg(kind, text) {
+  var box = el("expCopyMsg");
+  box.className = "msg " + kind;
+  box.textContent = text;
+  show("expCopyMsg", true);
+}
+
+function startExpenses() {
+  // 掃除＝渡した印が付いていて3か月より古いものだけ。未コピーは絶対に消さない
+  var items = loadExpenses();
+  var kept = pruneExpenses(items, todayKey());
+  if (kept.length !== items.length) saveExpenses(kept);
+
+  expState.cat = EXPENSE_QUICK[0];
+  buildExpCats();
+  paintExpCats();
+  setExpDate(todayKey());
+
+  Array.prototype.forEach.call(el("pageTabs").children, function (t) {
+    t.addEventListener("click", function () { switchPage(t.dataset.page); });
+  });
+  el("expAdd").addEventListener("click", addExpense);
+  el("expCopy").addEventListener("click", copyExpenses);
+  el("expPrevDay").addEventListener("click", function () { setExpDate(shiftDate(expState.date, -1)); });
+  el("expToday").addEventListener("click", function () { setExpDate(todayKey()); });
+  el("expAmount").addEventListener("input", function () {
+    show("expErr", false);
+    el("expAmount").classList.remove("missing");
+  });
+  renderExpenses();
+}
+
 // ── 起動 ────────────────────────────────────
 function start() {
   el("checkedOn").textContent = FEE_CHECKED_ON;
@@ -697,6 +1159,10 @@ function start() {
   });
 
   switchPlatform(saved.tab && PLATFORMS[saved.tab] ? saved.tab : "amazon");
+
+  startExpenses();
+  // 🔴 開いていたページは覚える。ただし既定は計算機（店で最初に要るのは判断のほう）
+  switchPage(saved.page === "exp" ? "exp" : "calc");
 }
 
 // ── 電波が無くても開けるか（控えの状態を正直に出す）─────────────
