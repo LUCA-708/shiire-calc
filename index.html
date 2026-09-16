@@ -269,7 +269,6 @@ details[open] summary::before{content:"▾ "}
 </div>
 
 <button class="btn" id="expSend" style="margin-top:10px">📤 未コピーぶんを PC へ送る</button>
-<button class="btn sub2" id="expCopy" style="margin-top:8px">📋 この iPhone にコピーする</button>
 <div id="expCopyMsg" class="msg hidden"></div>
 <textarea class="fallback hidden" id="expFallback" readonly></textarea>
 <div class="setup hidden" id="expSetup">
@@ -1069,8 +1068,6 @@ function renderExpenses() {
   show("expBadge", pending.length > 0);
   el("expSend").textContent = pending.length
     ? "📤 未コピー" + pending.length + "件を PC へ送る" : "📤 送るものはありません";
-  el("expCopy").textContent = pending.length
-    ? "📋 この iPhone にコピーする（" + pending.length + "件）" : "📋 コピーするものはありません";
 }
 
 function addWarn(box, text) {
@@ -1078,37 +1075,6 @@ function addWarn(box, text) {
   d.className = "expwarn";
   d.textContent = text;
   box.appendChild(d);
-}
-
-function copyExpenses() {
-  var items = loadExpenses();
-  var text = expenseText(items);
-  if (!text) { copyMsg("ng", "まだコピーするものがありません。"); return; }
-
-  function markCopied() {
-    var now = new Date().toISOString();
-    var updated = loadExpenses().map(function (it) {
-      if (!it.s) it.s = now;
-      return it;
-    });
-    saveExpenses(updated);
-    renderExpenses();
-    copyMsg("ok", "✅ コピーしました。パソコンの sales_manager に貼ってください。"
-      + "（✅済＝渡した印です。台帳に入ったかは PC 側で確かめてください）");
-  }
-  // 🔴 コピーできないときは黙らない＝同じ文を枠に出して、手で選べるようにする
-  //    （計算機の「送れませんでした」と同じ作法）
-  function fallback() {
-    el("expFallback").value = text;
-    show("expFallback", true);
-    copyMsg("ng", "自動でコピーできませんでした。下の枠の文を長押しして選び、コピーしてください。"
-      + "（控えはそのまま残してあります）");
-  }
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(markCopied, fallback);
-    } else { fallback(); }
-  } catch (e) { fallback(); }
 }
 
 /** Discord 経由で PC へ渡す。
@@ -1184,7 +1150,6 @@ function startExpenses() {
     t.addEventListener("click", function () { switchPage(t.dataset.page); });
   });
   el("expAdd").addEventListener("click", addExpense);
-  el("expCopy").addEventListener("click", copyExpenses);
   el("expSend").addEventListener("click", sendExpenses);
   el("expHookSave").addEventListener("click", function () {
     var u = (el("expHook").value || "").trim();
