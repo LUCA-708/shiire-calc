@@ -615,7 +615,7 @@ function doSend() {
     body: JSON.stringify({ content: text })
   }).then(function (r) {
     if (r.ok || r.status === 204) {
-      sendMsg("ok", "✅ 送りました。パソコンの Task Desk に入ります。");
+      sendMsg("ok", "✅ Discord まで送りました。<br>PC の Task Desk に入るのは、受け取り役（SD Bot）が動いているときです。止まっていても消えず、次に動かしたときに入ります。");
     } else {
       failSend("送り先が受け取ってくれませんでした（" + r.status + "）。", text);
     }
