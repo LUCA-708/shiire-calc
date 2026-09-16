@@ -29,7 +29,11 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#12141a;color:#e9ecf3}
 body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Meiryo",sans-serif;
-     padding:14px 14px calc(18px + env(safe-area-inset-bottom));max-width:460px;margin:0 auto;
+     /* 🔴 上も safe-area を足す。viewport-fit=cover ＋ black-translucent ＝
+        画面いっぱいに描く設定なので、足さないと**ノッチ（切り欠き）の下に潜る**。
+        2026-09-17 に実機で発覚＝一番上にタブを置いたことで半分隠れた（それまでは見出しだったので気づけなかった） */
+     padding:calc(14px + env(safe-area-inset-top)) 14px calc(18px + env(safe-area-inset-bottom));
+     max-width:460px;margin:0 auto;
      font-size:16px;-webkit-text-size-adjust:100%}
 h1{font-size:17px;font-weight:bold;margin:2px 0 12px;text-align:center}
 
