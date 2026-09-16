@@ -268,9 +268,15 @@ details[open] summary::before{content:"▾ "}
   <div class="expsum" id="expSum"></div>
 </div>
 
-<button class="btn" id="expCopy" style="margin-top:10px">📋 未コピーぶんをコピーする</button>
+<button class="btn" id="expSend" style="margin-top:10px">📤 未コピーぶんを PC へ送る</button>
+<button class="btn sub2" id="expCopy" style="margin-top:8px">📋 この iPhone にコピーする</button>
 <div id="expCopyMsg" class="msg hidden"></div>
 <textarea class="fallback hidden" id="expFallback" readonly></textarea>
+<div class="setup hidden" id="expSetup">
+  <p>経費の送り先がまだ設定されていません。🔴 <b>「タスク」チャンネル以外</b>で作った<b>ウェブフックのあて先</b>を貼ってください（タスクに送ると、経費の行がやることとして登録されてしまいます）。</p>
+  <input id="expHook" type="text" placeholder="https://discord.com/api/webhooks/...">
+  <button class="btn" id="expHookSave" style="margin-top:8px">保存する</button>
+</div>
 
 <div class="foot">
   ✅済は「<b>渡した印</b>」であって「台帳に入った印」ではありません<br>
@@ -517,6 +523,32 @@ function shiftDate(date, n) {
   d.setDate(d.getDate() + n);
   function z(x) { return (x < 10 ? "0" : "") + x; }
   return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate());
+}
+
+// Discord の1通の上限は2000字。枠（```）と余白のぶんを引いて 1800 を目安にする
+//（task_desk/core/discord_out.py の MESSAGE_LIMIT と同じ考え方＝**長さは送る側が見る**）
+var EXP_CHUNK_LIMIT = 1800;
+
+/** 長い文を「行を切らずに」何通かに分ける。
+ *  🔴 行の途中で切ると列が壊れ、貼った先で**黙って1件が化ける**。
+ */
+function expenseChunks(text, limit) {
+  var max = limit || EXP_CHUNK_LIMIT;
+  var out = [], cur = [], len = 0;
+  (text ? String(text).split("\n") : []).forEach(function (ln) {
+    if (cur.length && len + ln.length + 1 > max) { out.push(cur.join("\n")); cur = []; len = 0; }
+    cur.push(ln);
+    len += ln.length + 1;
+  });
+  if (cur.length) out.push(cur.join("\n"));
+  return out;
+}
+
+/** Discord に流す1通ぶん。**言語指定なしの ``` 枠**で囲む
+ *  （sd_discord_bot の format_settings と同じ形＝タブ区切りがそのまま保たれる）。
+ */
+function expenseBlock(chunk) {
+  return "```\n" + chunk + "\n```";
 }
 
 /** 入れてよい1件か。→ 悪ければ理由（日本語）、良ければ "" */
@@ -1035,8 +1067,10 @@ function renderExpenses() {
   var badge = el("expBadge");
   badge.textContent = String(pending.length);
   show("expBadge", pending.length > 0);
+  el("expSend").textContent = pending.length
+    ? "📤 未コピー" + pending.length + "件を PC へ送る" : "📤 送るものはありません";
   el("expCopy").textContent = pending.length
-    ? "📋 未コピー" + pending.length + "件をコピーする" : "📋 コピーするものはありません";
+    ? "📋 この iPhone にコピーする（" + pending.length + "件）" : "📋 コピーするものはありません";
 }
 
 function addWarn(box, text) {
@@ -1077,6 +1111,57 @@ function copyExpenses() {
   } catch (e) { fallback(); }
 }
 
+/** Discord 経由で PC へ渡す。
+ *  🔴 Discord は**文字の通り道**として使うだけ＝bot は関係ない（止まっていても届く）。
+ *  🔴 送り先は計算機（タスク）とは**別に覚える**。同じ所へ送ると bot が経費の行を
+ *     やることとして登録してしまう。
+ */
+function sendExpenses() {
+  var url = loadSaved().expWebhook;
+  if (!looksLikeWebhook(url)) { show("expSetup", true); copyMsg("ng", "先に経費の送り先を設定してください。"); return; }
+
+  var text = expenseText(loadExpenses());
+  if (!text) { copyMsg("ng", "まだ送るものがありません。"); return; }
+
+  var chunks = expenseChunks(text);
+  el("expSend").disabled = true;
+  copyMsg("ok", "送っています…");
+
+  var sent = 0;
+  function step() {
+    if (sent >= chunks.length) {
+      // 🔴 全部送れたときだけ印を付ける（途中で落ちたら未コピーのまま残す＝二度送りのほうが安全）
+      var now = new Date().toISOString();
+      saveExpenses(loadExpenses().map(function (it) { if (!it.s) it.s = now; return it; }));
+      renderExpenses();
+      el("expSend").disabled = false;
+      copyMsg("ok", "✅ Discord へ" + (chunks.length > 1 ? chunks.length + "通に分けて" : "")
+        + "送りました。PC の Discord でその投稿を右クリック →「テキストをコピー」→ "
+        + "sales_manager の貼り付け画面へ。（✅済＝渡した印です。台帳に入ったかは PC 側で確かめてください）");
+      return;
+    }
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: expenseBlock(chunks[sent]) })
+    }).then(function (r) {
+      if (!(r.ok || r.status === 204)) { failSendExp("送り先が受け取ってくれませんでした（" + r.status + "）。", text); return; }
+      sent += 1;
+      step();
+    }).catch(function () {
+      failSendExp("送れませんでした（電波が無いか、送り先が違います）。", text);
+    });
+  }
+  step();
+}
+
+function failSendExp(why, text) {
+  el("expSend").disabled = false;
+  el("expFallback").value = text;
+  show("expFallback", true);
+  copyMsg("ng", "⚠️ " + why + " 控えはそのまま残してあります（下の枠から手で写せます）。");
+}
+
 function copyMsg(kind, text) {
   var box = el("expCopyMsg");
   box.className = "msg " + kind;
@@ -1100,6 +1185,20 @@ function startExpenses() {
   });
   el("expAdd").addEventListener("click", addExpense);
   el("expCopy").addEventListener("click", copyExpenses);
+  el("expSend").addEventListener("click", sendExpenses);
+  el("expHookSave").addEventListener("click", function () {
+    var u = (el("expHook").value || "").trim();
+    if (!looksLikeWebhook(u)) { copyMsg("ng", "あて先の形が違うようです（https://discord.com/api/webhooks/… の形）。"); return; }
+    if (u === loadSaved().webhook) {
+      // 🔴 計算機（タスク）と同じ所は拒む＝経費の行がやることとして登録されるため
+      copyMsg("ng", "そこは計算機が「タスク」を送っている所です。経費は別のチャンネルのあて先にしてください。");
+      return;
+    }
+    saveSaved({ expWebhook: u });
+    el("expHook").value = "";
+    show("expSetup", false);
+    copyMsg("ok", "経費の送り先を覚えました。もう一度「PC へ送る」を押してください。");
+  });
   el("expPrevDay").addEventListener("click", function () { setExpDate(shiftDate(expState.date, -1)); });
   el("expToday").addEventListener("click", function () { setExpDate(todayKey()); });
   el("expAmount").addEventListener("input", function () {
