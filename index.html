@@ -45,6 +45,10 @@ h1{font-size:17px;font-weight:bold;margin:2px 0 12px;text-align:center}
 
 /* 入力欄 */
 .row{margin-bottom:11px}
+/* ①仕入値 と ②売れそうな値段 を横に並べる。
+   🔴 min-width:0 が要る＝無いと狭い端末（320px）で縮まず、はみ出す */
+.half{display:flex;gap:8px}
+.half .row{flex:1;min-width:0}
 .lab{font-size:12px;color:#9aa3b5;margin-bottom:4px;display:flex;justify-content:space-between;align-items:baseline}
 .mem{color:#c79a3a;font-size:11px}
 input[type=number],input[type=text]{width:100%;background:#1e2330;border:2px solid #333a4a;border-radius:10px;
@@ -139,7 +143,10 @@ details[open] summary::before{content:"▾ "}
 <body>
 
 <div class="ptabs" role="tablist" id="pageTabs">
-  <div class="ptab" role="tab" data-page="calc" aria-selected="true">🧮 仕入れ判断</div>
+  <!-- 🔴 それぞれのタブには**そのタブ自身の未送信件数**だけを出す（2026-09-17）。
+       他方の件数を相手のタブに出すと何の数か分からなくなる、が 09-17 の判断。
+       自分の数であれば、経費ページを開いている間も「仕入れの控えが残っている」と気づける。 -->
+  <div class="ptab" role="tab" data-page="calc" aria-selected="true">🧮 仕入れ判断<span class="pbadge hidden" id="calcBadge"></span></div>
   <!-- 🔴 未コピーの印は「経費」タブ側に付ける。2枚のタブはどちらの画面でも見えているので、
        計算機タブに付けても気づきやすさは変わらず、何の件数か分からなくなるだけ（2026-09-17 修正） -->
   <div class="ptab" role="tab" data-page="exp"  aria-selected="false">💴 経費<span class="pbadge hidden" id="expBadge"></span></div>
@@ -154,14 +161,17 @@ details[open] summary::before{content:"▾ "}
   <div class="tab" role="tab" data-plat="mercari" aria-selected="false">メルカリ</div>
 </div>
 
-<div class="row">
-  <div class="lab"><span>① 店の値札（仕入値）</span></div>
-  <input id="cost" type="number" inputmode="numeric" placeholder="例：3980">
-</div>
-
-<div class="row">
-  <div class="lab"><span>② 売れそうな値段</span></div>
-  <input id="sell" type="number" inputmode="numeric" placeholder="例：8860">
+<!-- 🔴 ①② は横に並べる（2026-09-17）。どちらも数字だけでチップも付かないので
+     半分の幅でも切れない。縦が1段ぶん減り、控えの一覧を置く余地ができる。 -->
+<div class="half">
+  <div class="row">
+    <div class="lab"><span>① 仕入値</span></div>
+    <input id="cost" type="number" inputmode="numeric" placeholder="例：3980">
+  </div>
+  <div class="row">
+    <div class="lab"><span>② 売れそうな値段</span></div>
+    <input id="sell" type="number" inputmode="numeric" placeholder="例：8860">
+  </div>
 </div>
 
 <div class="row">
@@ -213,13 +223,27 @@ details[open] summary::before{content:"▾ "}
     <div id="previewText"></div>
   </div>
 
-  <button class="btn" id="sendBtn" style="margin-top:8px">📤 この品を PC へ送る</button>
-  <div id="sendMsg"></div>
-  <div class="setup hidden" id="setupBox">
-    <p>送り先がまだ設定されていません。Discord の「タスク」チャンネルで作った<b>ウェブフックのあて先</b>を1回だけ貼ってください（この iPhone の中だけに残ります）。</p>
-    <input id="hook" type="text" placeholder="https://discord.com/api/webhooks/...">
-    <button class="btn" id="hookSave" style="margin-top:8px">保存する</button>
-  </div>
+  <button class="btn" id="keepAdd" style="margin-top:8px">＋ この1件を控える</button>
+  <div id="keepErr" class="msg hidden"></div>
+</div><!-- /#sendBox -->
+
+<!-- 🔴 控えの一覧・まとめ送信・あて先の設定は **#sendBox の外** に置く。
+     #sendBox は黒字のときしか出ない＝中に入れると、見送りの品しか無い日に
+     「送る」も「あて先の設定」もできなくなる（2026-09-17 の設計で発見）。 -->
+<div class="explist hidden" id="keepBox">
+  <div class="lab"><span>控え（新しい順）</span><span id="keepCount"></span></div>
+  <div id="keepList"></div>
+  <div class="expsum" id="keepSum"></div>
+</div>
+
+<button class="btn hidden" id="keepSend" style="margin-top:10px">📤 未送信ぶんを PC へ送る</button>
+<div id="keepMsg" class="msg hidden"></div>
+<textarea class="fallback hidden" id="keepFallback" readonly></textarea>
+
+<div class="setup hidden" id="setupBox">
+  <p>送り先がまだ設定されていません。Discord の「タスク」チャンネルで作った<b>ウェブフックのあて先</b>を1回だけ貼ってください（この iPhone の中だけに残ります）。</p>
+  <input id="hook" type="text" placeholder="https://discord.com/api/webhooks/...">
+  <button class="btn" id="hookSave" style="margin-top:8px">保存する</button>
 </div>
 
 <div class="foot">
@@ -558,6 +582,76 @@ function expenseProblem(amount, category) {
   return "";
 }
 
+// ── 🧮 仕入れの控え（2026-09-17）──────────────────────
+// 経費（expenseKey ほか）と**同じ形**にそろえる。違うのは2つだけ＝
+//   ① 頭文字が b（buy）＝経費の p と混ざらない
+//   ② 1件＝1通で送る（経費は1通に何行も入る）＝まとめる処理を持たない
+
+/** 鍵＝ b|端末|YYYYMMDD|その日の連番。**iPhone 側で作る**。
+ *  ・同じ日に同じ品を2回控えても連番が違う＝別物として両方入る
+ *  ・同じ控えを2回送っても鍵が同じ＝Task Desk 側で二重にならない
+ */
+function keepKey(date, seq, device) {
+  return "b|" + (device || "----") + "|" + String(date).replace(/-/g, "") + "|" + seq;
+}
+
+/** その日の次の連番。**消した行の番号は再利用しない**（経費と同じ理由）。 */
+function nextKeepSeq(items, date, device) {
+  var head = keepKey(date, "", device);
+  var max = 0;
+  (items || []).forEach(function (it) {
+    if (it && String(it.k).indexOf(head) === 0) {
+      var n = parseInt(String(it.k).slice(head.length), 10);
+      if (isFinite(n) && n > max) max = n;
+    }
+  });
+  return max + 1;
+}
+
+/** まだ送っていない控えだけ（古い順）。
+ *  🔴 送る順＝控えた順にする。店で見つけた順に Task Desk へ並ぶ。
+ */
+function pendingKeeps(items) {
+  return (items || []).filter(function (it) { return it && !it.s; })
+    .slice().sort(function (a, b) {
+      return a.d === b.d ? (a.k < b.k ? -1 : 1) : (a.d < b.d ? -1 : 1);
+    });
+}
+
+/** 未送信の「件数」と「見込み利益の合計」。→ { n: 件数, profit: 合計 }
+ *  🔴 合計に入れるのは**未送信だけ**。送信済みまで足すと、送るたびに増える
+ *     数字になって「これから送るぶん」を表さなくなる。
+ *  🔴 p は **1個あたり**（summaryLine の金額と同じ数え方）。個数を掛けずに足すと、
+ *     3個の品が1個ぶんしか入らず**合計が静かに少なく出る**。
+ */
+function keepTotals(items) {
+  var list = pendingKeeps(items), sum = 0;
+  list.forEach(function (it) {
+    if (isNum(it.p)) sum += it.p * (isNum(it.q) && it.q >= 1 ? Math.round(it.q) : 1);
+  });
+  return { n: list.length, profit: sum };
+}
+
+/** 掃除＝**送った印が付いていて、かつ7日より古いもの**だけ捨てる。
+ *  🔴 未送信は何年前でも絶対に消さない（消えたら控えそのものが消える）。
+ *  経費（3か月）より短いのは、仕入れの控えは「その日の振り返り」が目的のため。
+ */
+function pruneKeeps(items, today) {
+  var limit = shiftDate(today, -7);
+  return (items || []).filter(function (it) {
+    if (!it) return false;
+    if (!it.s) return true;
+    return String(it.d) >= limit;
+  });
+}
+
+/** 控えてよい1件か。→ 悪ければ理由（日本語）、良ければ "" */
+function keepProblem(text, profit) {
+  if (!text) return "先に①仕入値と②売れそうな値段を入れてください";
+  if (!isNum(profit)) return "計算がまだ終わっていません";
+  return "";
+}
+
 // ===CALC-END===
 
 // ── ここから下は画面まわり ──────────────────────────
@@ -732,6 +826,7 @@ function update() {
     // 「計算できない」でまとめず、直す場所を名指しする
     el("warn").innerHTML = "⚠️ <b>" + bad0.minus.map(esc).join("・") + "</b> に 0 以下の数字が入っています";
     show("warn", true); show("res", false); show("limit", false); show("sendBox", false);
+    forgetLast();
     return;
   }
   if (bad0.missing.length > 0) {
@@ -739,6 +834,7 @@ function update() {
     el("warn").innerHTML = "⚠️ <b>" + bad0.missing.map(esc).join("・") + "</b> が未入力です<br>"
       + "結果は出しません（空欄を0として計算すると、黒字に見えてしまうため）";
     show("warn", true); show("res", false); show("limit", false); show("sendBox", false);
+    forgetLast();
     return;
   }
 
@@ -754,6 +850,7 @@ function update() {
     // 率が 0〜100 の外など、計算できない入力
     el("warn").innerHTML = "⚠️ <b>手数料の率</b> が正しくありません（0〜100 の数字を入れてください）";
     show("warn", true); show("res", false); show("limit", false); show("sendBox", false);
+    forgetLast();
     return;
   }
   show("warn", false);
@@ -786,7 +883,10 @@ function update() {
 
   // 黒字のときだけ「PC へ送る」を出す（見送りの品を送っても仕方がない）
   show("sendBox", !bad);
+  // 🔴 送る文・見込み額・個数は**この1か所で同時に**作る。
+  //    別々の場所で作ると、控えたときに文と金額が違う品のものになる（静かにズレる）。
   window.__lastSummary = summaryText(cost, sell, profit, pr, conf.name);
+  window.__lastProfit = profit; window.__lastQty = numOf(el("qty"));
   // 🔴 送る前に中身を見せる。ここと __lastSummary は**必ず同じ文**にする
   //    （別々に組み立てると、見せた文と送る文が静かにズレる）
   //    textContent で入れる＝店名に < > が入っても画面が壊れない
@@ -817,54 +917,223 @@ function looksLikeWebhook(u) {              // task_desk/core/discord_out.py と
   return u.indexOf("https://") === 0 && u.indexOf("discord") >= 0 && u.indexOf("/webhooks/") >= 0;
 }
 
-function sendMsg(kind, html) {
-  var box = el("sendMsg");
+// ── 🧮 仕入れの控え（画面まわり・2026-09-17）──────────────
+// 品ごとに送るのはやめ、**控える → 一覧に貯める → まとめて送る**にした。
+// 🔴 控えは設定とも経費とも**別の箱**（片方が壊れても巻き添えにならない）
+var KEEP_KEY = "shiire_calc_keep_v1";
+var keepState = { armed: "" };
+
+/** 判定が出ていない状態の印。🔴 これが無いと、赤字に切り替えた直後に
+ *  前の品の文が生きたまま残る（器のズレ）。 */
+function forgetLast() {
+  window.__lastSummary = ""; window.__lastProfit = null; window.__lastQty = null;
+}
+
+function loadKeeps() {
+  try {
+    var raw = localStorage.getItem(KEEP_KEY);
+    var a = raw ? JSON.parse(raw) : [];
+    return Object.prototype.toString.call(a) === "[object Array]" ? a : [];
+  } catch (e) { return []; }
+}
+
+/** 控えを保存する。→ 保存できたか（true/false）
+ *  🔴 黙って失敗させない。「控えたのに何も起きない」＝一番気づけない壊れ方。
+ *     書いたら**読み直して**確かめる（経費の saveExpenses と同じ作法）。
+ */
+function saveKeeps(items) {
+  try {
+    localStorage.setItem(KEEP_KEY, JSON.stringify(items));
+    return loadKeeps().length === items.length;
+  } catch (e) { return false; }
+}
+
+/** 一覧の下・まとめ送信まわりの伝言（#sendBox の外なので、判定が消えても残る） */
+function keepMsg(kind, text) {
+  var box = el("keepMsg");
   box.className = "msg " + kind;
-  box.innerHTML = html;
+  box.textContent = text;
+  show("keepMsg", true);
 }
 
-function doSend() {
-  var url = loadSaved().webhook;
-  if (!looksLikeWebhook(url)) { show("setupBox", true); sendMsg("ng", "先に送り先を設定してください。"); return; }
+/** 控えるボタンのすぐ下の伝言（#sendBox の中＝判定が出ている間だけ見える） */
+function keepErr(kind, text) {
+  var box = el("keepErr");
+  box.className = "msg " + kind;
+  box.textContent = text;
+  show("keepErr", true);
+}
 
+/** 一覧の左に出す名前。**控えた文から切り出す**
+ *  🔴 表示用の名前を別項目で持たない（器が2つになると、片方だけ古くなる）。
+ */
+function keepName(it) {
+  var head = String(it.t || "").split("（")[0];
+  return head.replace("📦 出品する", "").replace(/^：/, "") || "（名前なし）";
+}
+
+function addKeep() {
   var text = window.__lastSummary || "";
-  if (!text) { sendMsg("ng", "計算がまだ終わっていません。"); return; }
+  var profit = window.__lastProfit;
+  var problem = keepProblem(text, profit);
+  if (problem) { keepErr("ng", problem); return; }
 
-  el("sendBtn").disabled = true;
-  sendMsg("ok", "送っています…");
-
-  fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content: text })
-  }).then(function (r) {
-    if (r.ok || r.status === 204) {
-      sendMsg("ok", "✅ Discord まで送りました。<br>PC の Task Desk に入るのは、受け取り役（SD Bot）が動いているときです。止まっていても消えず、次に動かしたときに入ります。");
-    } else {
-      failSend("送り先が受け取ってくれませんでした（" + r.status + "）。", text);
-    }
-  }).catch(function () {
-    // 圏外・機内モード・送り先が違う、のどれか。🔴 黙って失敗させない
-    failSend("送れませんでした（電波が無いか、送り先が違います）。", text);
-  }).then(function () {
-    el("sendBtn").disabled = false;
+  var items = loadKeeps();
+  var dev = deviceId();
+  var today = todayKey();
+  var qty = (isNum(window.__lastQty) && window.__lastQty >= 1) ? Math.round(window.__lastQty) : 1;
+  items.push({
+    d: today,
+    t: text,                       // 🔴 見せた文そのもの。以後ここから組み立て直さない
+    p: Math.round(profit),         // 1個あたりの見込み（文の金額と同じ数え方）
+    q: qty,
+    k: keepKey(today, nextKeepSeq(items, today, dev), dev),
+    s: ""
   });
+  // 🔴 入力を消す前に保存を確かめる。先に消すと、保存に失敗したとき打ち直せない
+  if (!saveKeeps(items)) {
+    keepErr("ng", "この iPhone に控えを保存できませんでした。空き容量を確かめてください（まだ控えていません）。");
+    return;
+  }
+  // 品ごとに変わるものだけ空にする（送料・率・店・販売先・ランクは次の品でも同じ）
+  el("cost").value = ""; el("sell").value = ""; el("memo").value = ""; el("qty").value = "";
+  show("keepFallback", false);
+  update();          // ①②が空 → 判定・上限・控えるボタンは update() が自分で隠す
+  renderKeeps();
+  // 🔴 控えた合図は #keepMsg に出す（#keepErr は update() で一緒に隠れて見えない）
+  keepMsg("ok", "✅ 控えました（未送信 " + keepTotals(loadKeeps()).n + "件）");
 }
 
-function failSend(why, text) {
-  sendMsg("ng", "⚠️ " + esc(why) + "<br>下を押すと文をコピーできます。あとで Discord に貼ってください。");
-  var b = document.createElement("button");
-  b.className = "btn";
-  b.style.marginTop = "8px";
-  b.textContent = "📋 文をコピーする";
-  b.addEventListener("click", function () {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(function () { b.textContent = "📋 コピーしました"; });
-    } else {
-      b.textContent = "コピーできませんでした";
-    }
+function removeKeep(key) {
+  keepState.armed = "";
+  saveKeeps(loadKeeps().filter(function (it) { return it.k !== key; }));
+  renderKeeps();
+}
+
+function renderKeeps() {
+  var items = loadKeeps();
+  var list = el("keepList");
+  list.innerHTML = "";
+
+  items.slice().sort(function (a, b) {
+    return a.d === b.d ? (a.k < b.k ? 1 : -1) : (a.d < b.d ? 1 : -1);   // 新しい順
+  }).forEach(function (it) {
+    var row = document.createElement("div");
+    row.className = "expit" + (it.s ? " sent" : "");
+    var left = document.createElement("span");
+    left.textContent = (it.s ? "✅済 " : "") + keepName(it)
+      + ((isNum(it.q) && it.q >= 2) ? " ×" + Math.round(it.q) : "")
+      + (it.d === todayKey() ? "" : "（" + String(it.d).slice(5) + "）");
+    var right = document.createElement("span");
+    right.textContent = (it.p >= 0 ? "＋" : "−") + yen(Math.abs(it.p)) + "円";
+    // 🔴 一発で消さない＝店での誤タップで控えが消える。
+    //    ブラウザの確認ダイアログは使えない（出すと操作が止まる）ので**2度押し**にする。
+    var del = document.createElement("span");
+    del.className = "del";
+    del.textContent = "✕";
+    del.addEventListener("click", function () {
+      if (keepState.armed === it.k) { removeKeep(it.k); return; }
+      keepState.armed = it.k;
+      del.textContent = "もう一度で消す";
+      del.style.color = "#ff8189";
+      setTimeout(function () {
+        if (keepState.armed !== it.k) return;
+        keepState.armed = "";
+        del.textContent = "✕";
+        del.style.color = "";
+      }, 4000);
+    });
+    right.appendChild(del);
+    row.appendChild(left);
+    row.appendChild(right);
+    list.appendChild(row);
   });
-  el("sendMsg").appendChild(b);
+
+  var t = keepTotals(items);
+  el("keepCount").textContent = items.length ? items.length + "件" : "";
+  el("keepSum").innerHTML = "";
+  var l = document.createElement("span");
+  l.textContent = "未送信 " + t.n + "件";
+  var r = document.createElement("span");
+  r.textContent = "見込み " + (t.profit >= 0 ? "＋" : "−") + yen(Math.abs(t.profit)) + "円";
+  el("keepSum").appendChild(l);
+  el("keepSum").appendChild(r);
+
+  // 0件なら一覧の枠ごと・まとめ送信ごと出さない（使わない日は画面を伸ばさない）
+  show("keepBox", items.length > 0);
+  show("keepSend", items.length > 0);
+  el("keepSend").textContent = t.n ? "📤 未送信" + t.n + "件を PC へ送る" : "📤 送るものはありません";
+  el("keepSend").disabled = !t.n;
+
+  var badge = el("calcBadge");
+  badge.textContent = String(t.n);
+  show("calcBadge", t.n > 0);
+}
+
+/** PC へ渡す。🔴 **1件＝1通**で連投する（Task Desk は1通＝1タスク）。 */
+function sendKeeps() {
+  var url = loadSaved().webhook;
+  if (!looksLikeWebhook(url)) { show("setupBox", true); keepMsg("ng", "先に送り先を設定してください。"); return; }
+
+  var queue = pendingKeeps(loadKeeps());
+  if (!queue.length) { keepMsg("ng", "まだ送るものがありません。"); return; }
+
+  el("keepSend").disabled = true;
+  show("keepFallback", false);
+  keepMsg("ok", "送っています…（" + queue.length + "件）");
+
+  var done = 0;
+  function step() {
+    if (done >= queue.length) {
+      el("keepSend").disabled = false;
+      renderKeeps();
+      keepMsg("ok", "✅ " + done + "件を Discord まで送りました。PC の Task Desk に入るのは、"
+        + "受け取り役（SD Bot）が動いているときです。止まっていても消えず、次に動かしたときに入ります。");
+      return;
+    }
+    var it = queue[done];
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: it.t })
+    }).then(function (r) {
+      if (!(r.ok || r.status === 204)) {
+        failSendKeep("送り先が受け取ってくれませんでした（" + r.status + "）。", queue.slice(done), done);
+        return;
+      }
+      // 🔴 1通＝1件なので、送れたその1件に**すぐ**印を付ける。
+      //    「全部終わってから」にすると、途中で落ちたとき送れた分をもう一度送ることになり、
+      //    Task Desk に同じ品が2つ並ぶ（鍵で弾く仕組みが向こうに無い）。
+      var now = new Date().toISOString();
+      saveKeeps(loadKeeps().map(function (x) { if (x.k === it.k && !x.s) x.s = now; return x; }));
+      done += 1;
+      renderKeeps();
+      step();
+    }).catch(function () {
+      failSendKeep("送れませんでした（電波が無いか、送り先が違います）。", queue.slice(done), done);
+    });
+  }
+  step();
+}
+
+function failSendKeep(why, rest, done) {
+  el("keepSend").disabled = false;
+  el("keepFallback").value = rest.map(function (it) { return it.t; }).join("\n");
+  show("keepFallback", true);
+  renderKeeps();
+  keepMsg("ng", "⚠️ " + why + (done ? "（" + done + "件は送れました）" : "")
+    + " 残り" + rest.length + "件は控えに残してあります（下の枠から手で写せます）。");
+}
+
+function startKeeps() {
+  // 掃除＝送った印が付いていて7日より古いものだけ。未送信は絶対に消さない
+  var items = loadKeeps();
+  var kept = pruneKeeps(items, todayKey());
+  if (kept.length !== items.length) saveKeeps(kept);
+
+  renderKeeps();
+  el("keepAdd").addEventListener("click", addKeep);
+  el("keepSend").addEventListener("click", sendKeeps);
 }
 
 // ── 💴 経費メモ（画面まわり）─────────────────────────
@@ -1216,18 +1485,18 @@ function start() {
     update();
   });
 
-  el("sendBtn").addEventListener("click", doSend);
   el("hookSave").addEventListener("click", function () {
     var u = (el("hook").value || "").trim();
-    if (!looksLikeWebhook(u)) { sendMsg("ng", "あて先の形が違うようです（https://discord.com/api/webhooks/… の形）。"); return; }
+    if (!looksLikeWebhook(u)) { keepMsg("ng", "あて先の形が違うようです（https://discord.com/api/webhooks/… の形）。"); return; }
     saveSaved({ webhook: u });
     el("hook").value = "";
     show("setupBox", false);
-    sendMsg("ok", "送り先を覚えました。もう一度「PC へ送る」を押してください。");
+    keepMsg("ok", "送り先を覚えました。もう一度「PC へ送る」を押してください。");
   });
 
   switchPlatform(saved.tab && PLATFORMS[saved.tab] ? saved.tab : "amazon");
 
+  startKeeps();
   startExpenses();
   // 🔴 開いていたページは覚える。ただし既定は計算機（店で最初に要るのは判断のほう）
   switchPage(saved.page === "exp" ? "exp" : "calc");
