@@ -131,6 +131,10 @@ details[open] summary::before{content:"▾ "}
         border-radius:9px;padding:1px 6px;font-weight:bold}
 .expcats{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
 .expcats .chip{flex:none;padding:8px 10px}
+/* 「▸ 前の ✅済 N件を見る」の行。控えと経費で共通 */
+.foldrow{margin-top:6px;padding:6px 0;text-align:center;font-size:11.5px;color:#8a93a5;
+         border:1px dashed #3b4354;border-radius:8px;cursor:pointer;user-select:none}
+.foldrow:active{background:#232836}
 .explist{background:#1b1f2b;border:1px solid #2c3243;border-radius:10px;padding:10px;margin-top:12px;font-size:13px}
 .expit{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px dashed #2c3243;color:#c2cad9}
 .expit:last-child{border-bottom:none}
@@ -672,6 +676,36 @@ function pruneKeeps(items, today) {
   });
 }
 
+// ── 一覧が伸びすぎないようにする（2026-09-17・控えと経費で共通）──────
+// 1行 ≒ 31px。1日10件を7日ぶん貯めると70行 ≒ 2,170px＝表示域の3画面半になる。
+// 伸ばしているのは**もう用が済んだ✅済**なので、そこだけ畳む。
+var LIST_LIMIT = 10;
+
+/** 一覧に「出すぶん」と「畳むぶん」に分ける（**新しい順に並べたもの**を渡すこと）。
+ *  🔴 まだ渡していないもの（`!it.s`）は**枠に関係なく必ず出す**。
+ *     隠すと送り忘れ・渡し忘れに気づけなくなる（画面から消えた＝済んだ、と見えるため）。
+ *  → { shown: 出すぶん, folded: 畳むぶん }
+ */
+function splitForList(sortedNewestFirst, limit) {
+  var max = isNum(limit) && limit > 0 ? limit : LIST_LIMIT;
+  var shown = [], folded = [];
+  (sortedNewestFirst || []).forEach(function (it) {
+    if (!it) return;
+    if (!it.s) { shown.push(it); return; }
+    if (shown.length < max) { shown.push(it); return; }
+    folded.push(it);
+  });
+  return { shown: shown, folded: folded };
+}
+
+/** 畳んだぶんの日付の幅（"09-11〜09-16"。1日だけなら "09-16"）。 */
+function foldedRange(items) {
+  var ds = (items || []).map(function (it) { return String(it.d); }).sort();
+  if (!ds.length) return "";
+  var a = ds[0].slice(5), b = ds[ds.length - 1].slice(5);
+  return a === b ? a : a + "〜" + b;
+}
+
 /** 控えてよい1件か。→ 悪ければ理由（日本語）、良ければ "" */
 function keepProblem(text, profit) {
   if (!text) return "先に①仕入値と②売れそうな値段を入れてください";
@@ -948,7 +982,24 @@ function looksLikeWebhook(u) {              // task_desk/core/discord_out.py と
 // 品ごとに送るのはやめ、**控える → 一覧に貯める → まとめて送る**にした。
 // 🔴 控えは設定とも経費とも**別の箱**（片方が壊れても巻き添えにならない）
 var KEEP_KEY = "shiire_calc_keep_v1";
-var keepState = { armed: "" };
+var keepState = { armed: "", showAll: false };
+
+/** 「▸ 前の ✅済 N件を見る（09-11〜09-16）」の行。押すと開き、もう一度押すと畳む。
+ *  🔴 **消すのではなく畳むだけ**と分かる言い方にする（「見る」＝記録は残っている）。
+ *  控えと経費で同じものを使う。
+ */
+function appendFoldRow(list, folded, state, redraw) {
+  var row = document.createElement("div");
+  row.className = "foldrow";
+  row.textContent = state.showAll
+    ? "▾ 古い ✅済 を畳む"
+    : "▸ 前の ✅済 " + folded.length + "件を見る（" + foldedRange(folded) + "）";
+  row.addEventListener("click", function () {
+    state.showAll = !state.showAll;
+    redraw();
+  });
+  list.appendChild(row);
+}
 
 /** 判定が出ていない状態の印。🔴 これが無いと、赤字に切り替えた直後に
  *  前の品の文が生きたまま残る（器のズレ）。 */
@@ -1042,8 +1093,9 @@ function renderKeeps() {
   var list = el("keepList");
   list.innerHTML = "";
 
-  items.slice().sort(function (a, b) { return -compareByOldest(a, b); })   // 新しい順
-    .forEach(function (it) {
+  var sorted = items.slice().sort(function (a, b) { return -compareByOldest(a, b); });  // 新しい順
+  var part = splitForList(sorted, LIST_LIMIT);
+  (keepState.showAll ? sorted : part.shown).forEach(function (it) {
     var row = document.createElement("div");
     row.className = "expit" + (it.s ? " sent" : "");
     var left = document.createElement("span");
@@ -1074,6 +1126,7 @@ function renderKeeps() {
     row.appendChild(right);
     list.appendChild(row);
   });
+  if (part.folded.length) appendFoldRow(list, part.folded, keepState, renderKeeps);
 
   var t = keepTotals(items);
   el("keepCount").textContent = items.length ? items.length + "件" : "";
@@ -1165,7 +1218,7 @@ function startKeeps() {
 // ── 💴 経費メモ（画面まわり）─────────────────────────
 // 🔴 控えは設定とは**別の箱**に入れる（設定が壊れても記録が巻き添えにならない）
 var EXP_KEY = "shiire_calc_exp_v1";
-var expState = { cat: "", date: "", more: false, armed: "" };
+var expState = { cat: "", date: "", more: false, armed: "", showAll: false };
 
 function loadExpenses() {
   try {
@@ -1300,8 +1353,9 @@ function renderExpenses() {
   var list = el("expList");
   list.innerHTML = "";
 
-  items.slice().sort(function (a, b) { return -compareByOldest(a, b); })   // 新しい順
-    .forEach(function (it) {
+  var sorted = items.slice().sort(function (a, b) { return -compareByOldest(a, b); });  // 新しい順
+  var part = splitForList(sorted, LIST_LIMIT);
+  (expState.showAll ? sorted : part.shown).forEach(function (it) {
     var row = document.createElement("div");
     row.className = "expit" + (it.s ? " sent" : "");
     var left = document.createElement("span");
@@ -1331,6 +1385,7 @@ function renderExpenses() {
     row.appendChild(right);
     list.appendChild(row);
   });
+  if (part.folded.length) appendFoldRow(list, part.folded, expState, renderExpenses);
 
   var sum = 0;
   pending.forEach(function (it) { sum += it.a; });
