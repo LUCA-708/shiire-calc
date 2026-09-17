@@ -67,6 +67,9 @@ summary{padding:10px 12px;font-size:12px;color:#9aa3b5;cursor:pointer;list-style
 summary::-webkit-details-marker{display:none}
 summary::before{content:"▸ ";color:#c79a3a}
 details[open] summary::before{content:"▾ "}
+/* ランクの説明。開いたときだけ見える（閉じた見出しの長さは変えない） */
+.ranknote{padding:0 12px 8px;font-size:11.5px;color:#8a93a5;line-height:1.6}
+.ranknote b{color:#ffd479}
 .ranks{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 10px}
 .ranks .chip{flex:0 0 calc(25% - 5px)}
 
@@ -197,6 +200,11 @@ details[open] summary::before{content:"▾ "}
 
 <details id="rankBox">
   <summary>中古で買うとき（商品ランク）　<span id="rankNow" style="color:#ffd479">A 1.00</span></summary>
+  <!-- 🔴 説明は**開いたときだけ**出す（閉じた見出しは今のまま＝画面が伸びない）。
+       間違えて押したときは開いているので、その場面ではちゃんと読める。
+       🔴「新品は A」とは書かない＝「新品級」（1.10）が別にあり、選び間違いを招く。 -->
+  <div class="ranknote">迷ったら <b>A</b>（1.00）＝売値をそのままで計算します。<br>
+    新品級・S は売値を<b>高め</b>に、B から下は<b>低め</b>に見ます。</div>
   <div class="ranks" id="rankChips"></div>
 </details>
 
@@ -502,9 +510,9 @@ function expenseLine(it) {
 
 /** PC へ渡す文＝**まだ渡していないぶんだけ**を古い順に並べる。 */
 function expenseText(items) {
-  return pendingExpenses(items).slice().sort(function (a, b) {
-    return a.d === b.d ? (a.k < b.k ? -1 : 1) : (a.d < b.d ? -1 : 1);
-  }).map(expenseLine).join("\n");
+  // 🔴 並べ方は控えと共通の compareByOldest（連番を数で比べる）。
+  //    文字のまま比べていたころは「10件目が2件目より前」になっていた（2026-09-17 修正）。
+  return pendingExpenses(items).slice().sort(compareByOldest).map(expenseLine).join("\n");
 }
 
 function pendingExpenses(items) {
@@ -608,14 +616,33 @@ function nextKeepSeq(items, date, device) {
   return max + 1;
 }
 
+/** 鍵の末尾の連番を**数として**取り出す（読めなければ 0）。
+ *  🔴 鍵を文字のまま比べると「10」が「2」より前に来る＝**10件目から並びが狂う**
+ *     （2026-09-17 に実機で発覚。9件目までは正しいので気づきにくい）。
+ *     鍵そのものは変えない＝すでに PC へ送ったものと食い違わせないため。
+ */
+function seqOfKey(k) {
+  var n = parseInt(String(k).split("|").pop(), 10);
+  return isFinite(n) ? n : 0;
+}
+
+/** 並べ方の物差し（**控えと経費で共通**）。→ 古い順で a が先なら負。
+ *  日付が違えば日付で、同じ日なら連番を数で比べる。
+ *  連番まで同じとき（2台目の端末で作った鍵）は鍵の文字で決める＝順番がぶれない。
+ */
+function compareByOldest(a, b) {
+  if (a.d !== b.d) return a.d < b.d ? -1 : 1;
+  var s = seqOfKey(a.k) - seqOfKey(b.k);
+  if (s) return s;
+  return a.k < b.k ? -1 : (a.k > b.k ? 1 : 0);
+}
+
 /** まだ送っていない控えだけ（古い順）。
  *  🔴 送る順＝控えた順にする。店で見つけた順に Task Desk へ並ぶ。
  */
 function pendingKeeps(items) {
   return (items || []).filter(function (it) { return it && !it.s; })
-    .slice().sort(function (a, b) {
-      return a.d === b.d ? (a.k < b.k ? -1 : 1) : (a.d < b.d ? -1 : 1);
-    });
+    .slice().sort(compareByOldest);
 }
 
 /** 未送信の「件数」と「見込み利益の合計」。→ { n: 件数, profit: 合計 }
@@ -1015,9 +1042,8 @@ function renderKeeps() {
   var list = el("keepList");
   list.innerHTML = "";
 
-  items.slice().sort(function (a, b) {
-    return a.d === b.d ? (a.k < b.k ? 1 : -1) : (a.d < b.d ? 1 : -1);   // 新しい順
-  }).forEach(function (it) {
+  items.slice().sort(function (a, b) { return -compareByOldest(a, b); })   // 新しい順
+    .forEach(function (it) {
     var row = document.createElement("div");
     row.className = "expit" + (it.s ? " sent" : "");
     var left = document.createElement("span");
@@ -1274,9 +1300,8 @@ function renderExpenses() {
   var list = el("expList");
   list.innerHTML = "";
 
-  items.slice().sort(function (a, b) {
-    return a.d === b.d ? (a.k < b.k ? 1 : -1) : (a.d < b.d ? 1 : -1);
-  }).forEach(function (it) {
+  items.slice().sort(function (a, b) { return -compareByOldest(a, b); })   // 新しい順
+    .forEach(function (it) {
     var row = document.createElement("div");
     row.className = "expit" + (it.s ? " sent" : "");
     var left = document.createElement("span");
