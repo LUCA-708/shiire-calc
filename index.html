@@ -203,11 +203,12 @@ details[open] summary::before{content:"▾ "}
 </div>
 
 <details id="rankBox">
-  <summary>中古で買うとき（商品ランク）　<span id="rankNow" style="color:#ffd479">A 1.00</span></summary>
+  <summary>商品の状態（新品／中古のランク）　<span id="rankNow" style="color:#ffd479">A 1.00</span></summary>
   <!-- 🔴 説明は**開いたときだけ**出す（閉じた見出しは今のまま＝画面が伸びない）。
        間違えて押したときは開いているので、その場面ではちゃんと読める。
        🔴「新品は A」とは書かない＝「新品級」（1.10）が別にあり、選び間違いを招く。 -->
-  <div class="ranknote">迷ったら <b>A</b>（1.00）＝売値をそのままで計算します。<br>
+  <div class="ranknote"><b>新品</b>＝未開封・新品として売るもの。売値はそのままで計算します。<br>
+    <b>新品級</b>は「<b>新品同様の中古</b>」＝別物です。中古は、迷ったら <b>A</b>（1.00）。<br>
     新品級・S は売値を<b>高め</b>に、B から下は<b>低め</b>に見ます。</div>
   <div class="ranks" id="rankChips"></div>
 </details>
@@ -442,8 +443,12 @@ function summaryLine(o) {
     + "（" + o.platName + "）仕入 " + yen(o.cost) + "円" + per + " ／ 売値 " + yen(o.sell) + "円" + per
     + " ／ 手残り " + (o.profit >= 0 ? "+" : "-") + yen(Math.abs(o.profit)) + "円" + per
     + "（" + o.profitRate.toFixed(1) + "%）";
-  // 状態＝ランクの倍率が 1.00（＝A）以外のときだけ。画面の rankNote と同じ見せ方に揃える
-  if (isNum(o.rankMul) && o.rankMul !== 1 && o.rankLabel) s += " ／ 状態：" + o.rankLabel;
+  // 状態＝ランクの倍率が 1.00（＝A）以外のときだけ。画面の rankNote と同じ見せ方に揃える。
+  // 🔴 ただし**新品だけは倍率に関係なく必ず出す**（2026-09-17）。新品の倍率は 1.00 なので、
+  //    この条件に任せると「状態：新品」が消え、PC の台帳へ**静かに全部"中古"で入る**
+  //    （台帳の condition は「新品／中古」の2つで、この字を見て決まる）。
+  var isNew = (o.rankKey === "new");
+  if (o.rankLabel && (isNew || (isNum(o.rankMul) && o.rankMul !== 1))) s += " ／ 状態：" + o.rankLabel;
   if (isNum(o.qty) && o.qty >= 2) s += " ／ 個数：" + Math.round(o.qty);
   if (store) s += " ／ 店：" + store;
   return s;
@@ -607,6 +612,23 @@ function keepKey(date, seq, device) {
   return "b|" + (device || "----") + "|" + String(date).replace(/-/g, "") + "|" + seq;
 }
 
+/** PC へ渡す1行＝控えた文の末尾に「買った日」と「鍵」を足したもの（2026-09-17）。
+ *
+ *  🔴 **なぜ送るときに足すのか**＝鍵は「控える」瞬間に連番が決まる＝**文を作った後**にしか存在しない。
+ *     さらにこの形なら、**鍵が無いまま控えてある古い品も、送るときに自動で鍵が付く**。
+ *  🔴 **買った日は鍵の中の日付と必ず同じ**＝どちらも同じ `it.d` から作る。別々に組み立てない
+ *     （片方だけ直すと静かにズレるため。テストで一致を縛る）。
+ *  🔴 **この文は Task Desk の「やること」にもなる**。Task Desk は `@`期限 `#`カテゴリ `!`優先度 を拾うが、
+ *     鍵に使う字は `b` ／ 英数字4文字 ／ 数字 ／ `|` だけ＝**勝手に期限やカテゴリは付かない**。
+ *  二重に足さない＝すでに「鍵：」が入っている文はそのまま返す。
+ */
+function sendLine(it) {
+  var text = String((it && it.t) || "");
+  if (!it || !it.k || text.indexOf("／ 鍵：") >= 0) return text;
+  var day = String(it.d || "");
+  return text + (day ? " ／ 買った日：" + day : "") + " ／ 鍵：" + it.k;
+}
+
 /** その日の次の連番。**消した行の番号は再利用しない**（経費と同じ理由）。 */
 function nextKeepSeq(items, date, device) {
   var head = keepKey(date, "", device);
@@ -727,6 +749,11 @@ var PLATFORMS = {
 
 // 商品ランク倍率＝sedori_radar/config/fees.json の condition_multiplier と同じ値
 var RANKS = [
+  // 🔴 「新品」だけは中古のランクではない（2026-09-17 追加）。倍率 1.00＝売値そのまま。
+  //    根拠＝倍率の出どころ sedori_radar/config/fees.json は「オフモールの商品ランク→
+  //    ヤフオク中古中央値に掛ける倍率」で、**新品の値を持っていない**。無い数字は作らない。
+  //    🔴 台帳（sales_manager）の condition は「新品／中古」の2つ＝この label がそのまま効く。
+  { key: "new", label: "新品", m: 1.00 },
   { key: "n", label: "新品級", m: 1.10 }, { key: "s", label: "S", m: 1.05 },
   { key: "a", label: "A", m: 1.00 },      { key: "b", label: "B", m: 0.85 },
   { key: "c", label: "C", m: 0.70 },      { key: "d", label: "D", m: 0.55 },
@@ -829,7 +856,16 @@ function saveRate(v) {
 
 function rankMultiplier() {
   for (var i = 0; i < RANKS.length; i++) { if (RANKS[i].key === state.rank) return RANKS[i]; }
-  return RANKS[2];
+  // 🔴 予備は **名前で引く**（2026-09-17）。以前は一覧の**3番目を位置で**指していたため、
+  //    2026-09-17 に先頭へ「新品」を足した時点で**予備が A(1.00) から S(1.05) に化けていた**
+  //    ＝並びを変えるだけで静かに計算がズレる型。位置で数えない。
+  return rankByKey("a");
+}
+
+/** ランクを名前で引く（無ければ null）。並び順に依存しない唯一の引き方。 */
+function rankByKey(key) {
+  for (var i = 0; i < RANKS.length; i++) { if (RANKS[i].key === key) return RANKS[i]; }
+  return null;
 }
 
 function switchPlatform(plat) {
@@ -960,7 +996,7 @@ function summaryText(cost, sell, profit, pr, platName) {
   return summaryLine({
     memo: el("memo").value, store: el("store").value, qty: numOf(el("qty")),
     cost: cost, sell: sell, profit: profit, profitRate: pr, platName: platName,
-    rankMul: rank.m, rankLabel: rank.label
+    rankMul: rank.m, rankLabel: rank.label, rankKey: rank.key
   });
 }
 
@@ -1174,7 +1210,7 @@ function sendKeeps() {
     fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: it.t })
+      body: JSON.stringify({ content: sendLine(it) })
     }).then(function (r) {
       if (!(r.ok || r.status === 204)) {
         failSendKeep("送り先が受け取ってくれませんでした（" + r.status + "）。", queue.slice(done), done);
@@ -1197,7 +1233,9 @@ function sendKeeps() {
 
 function failSendKeep(why, rest, done) {
   el("keepSend").disabled = false;
-  el("keepFallback").value = rest.map(function (it) { return it.t; }).join("\n");
+  // 🔴 手で貼る欄も**送るのと同じ文**にする。ここだけ素の文にすると、電波が無かった日の品だけ
+  //    鍵なしで台帳に入り、二重登録を止められない（片側だけ直す型）。
+  el("keepFallback").value = rest.map(function (it) { return sendLine(it); }).join("\n");
   show("keepFallback", true);
   renderKeeps();
   keepMsg("ng", "⚠️ " + why + (done ? "（" + done + "件は送れました）" : "")
