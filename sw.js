@@ -11,7 +11,7 @@
        版番号を上げ忘れたことは機械では分からない＝人が気をつける）
 */
 
-var CACHE = "shiire-v11";
+var CACHE = "shiire-v12";
 
 // 控える物の一覧。"./" は入口（ホーム画面のアイコンが開くアドレス）＝中身は index.html
 var FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png"];
