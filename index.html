@@ -419,8 +419,10 @@ function invalidInputs(v) {
  *     「#3 プラモ」のような商品名をそのまま送ると、名前の一部がカテゴリに化けて消える。
  */
 function safeMemo(s) {
-  return String(s).replace(/[@#!]/g, function (c) {
-    return { "@": "＠", "#": "＃", "!": "！" }[c];
+  // 🔴 全角「／」は半角「/」に（2026-09-25）。PC 側は「／」で項目を区切るので、
+  //    「上下巻セット／特典付き」をそのまま送ると**その行が丸ごと読めなくなる**（本物の読み取りで再現）。
+  return String(s).replace(/[@#!／]/g, function (c) {
+    return { "@": "＠", "#": "＃", "!": "！", "／": "/" }[c];
   });
 }
 
@@ -501,9 +503,12 @@ function expenseKey(date, seq, device) {
 /** その日の次の連番。**消した行の番号は再利用しない**
  *  （再利用すると、先に貼った行と鍵がぶつかって片方が「取り込み済み」で消える）。
  */
-function nextExpenseSeq(items, date, device) {
+function nextExpenseSeq(items, date, device, used) {
   var head = expenseKey(date, "", device);
-  var max = 0;
+  // 🔴 覚えている「その日に使った一番大きい番号」から数え始める（2026-09-25）。
+  //    残っている行の最大だけだと、送った後に消した一番新しい番号がもう一度使われ、
+  //    PC 側で「取り込み済み」として**別の経費が省かれる**（Node で再現済み）。
+  var max = Number(used) > 0 ? Number(used) : 0;
   (items || []).forEach(function (it) {
     if (it && String(it.k).indexOf(head) === 0) {
       var n = parseInt(String(it.k).slice(head.length), 10);
@@ -631,9 +636,9 @@ function sendLine(it) {
 }
 
 /** その日の次の連番。**消した行の番号は再利用しない**（経費と同じ理由）。 */
-function nextKeepSeq(items, date, device) {
+function nextKeepSeq(items, date, device, used) {
   var head = keepKey(date, "", device);
-  var max = 0;
+  var max = Number(used) > 0 ? Number(used) : 0;   // 覚えている番号から（経費と同じ理由）
   (items || []).forEach(function (it) {
     if (it && String(it.k).indexOf(head) === 0) {
       var n = parseInt(String(it.k).slice(head.length), 10);
@@ -641,6 +646,27 @@ function nextKeepSeq(items, date, device) {
     }
   });
   return max + 1;
+}
+
+/** 「その日に使った一番大きい番号」の控えを更新した新しい表を返す（2026-09-25）。
+ *  map … { "<鍵の頭 b|dev|YYYYMMDD|>": 番号 }（控え・経費で共通の入れ物）
+ *  🔴 番号は**下げない**（大きい方を残す）。
+ *  🔴 SEQ_KEEP_DAYS より古い日付の分は捨てる＝入れ物が増え続けない。控え（7日）・経費（92日）の
+ *     自動掃除より長いので、行が消えた後で番号が戻ることはない。
+ */
+var SEQ_KEEP_DAYS = 120;
+function withSeqUsed(map, head, seq, today) {
+  var out = {};
+  var base = Date.UTC(+today.slice(0, 4), +today.slice(5, 7) - 1, +today.slice(8, 10));
+  Object.keys(map || {}).forEach(function (h) {
+    var ymd = String(h).split("|")[2] || "";
+    var t = Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8));
+    var n = Number(map[h]);
+    if (isFinite(t) && isFinite(n) && (base - t) / 86400000 <= SEQ_KEEP_DAYS) out[h] = n;
+  });
+  var cur = Number(out[head]) || 0;
+  out[head] = Math.max(cur, Number(seq) || 0);
+  return out;
 }
 
 /** 鍵の末尾の連番を**数として**取り出す（読めなければ 0）。
@@ -1097,12 +1123,14 @@ function addKeep() {
   var dev = deviceId();
   var today = todayKey();
   var qty = (isNum(window.__lastQty) && window.__lastQty >= 1) ? Math.round(window.__lastQty) : 1;
+  var head = keepKey(today, "", dev);
+  var seq = nextKeepSeq(items, today, dev, usedSeq(head));
   items.push({
     d: today,
     t: text,                       // 🔴 見せた文そのもの。以後ここから組み立て直さない
     p: Math.round(profit),         // 1個あたりの見込み（文の金額と同じ数え方）
     q: qty,
-    k: keepKey(today, nextKeepSeq(items, today, dev), dev),
+    k: keepKey(today, seq, dev),
     s: ""
   });
   // 🔴 入力を消す前に保存を確かめる。先に消すと、保存に失敗したとき打ち直せない
@@ -1110,6 +1138,7 @@ function addKeep() {
     keepErr("ng", "この iPhone に控えを保存できませんでした。空き容量を確かめてください（まだ控えていません）。");
     return;
   }
+  markSeqUsed(head, seq);          // 消しても番号が戻らないように（2026-09-25）
   // 品ごとに変わるものだけ空にする（送料・率・店・販売先・ランクは次の品でも同じ）
   el("cost").value = ""; el("sell").value = ""; el("memo").value = ""; el("qty").value = "";
   show("keepFallback", false);
@@ -1281,6 +1310,17 @@ function saveExpenses(items) {
  *  🔴 これが無いと、2台目（iPad など）で作った鍵が1台目と同じになり、
  *     PC 側が「取り込み済み」として**別の経費を静かに省く**（気づく手立てがない）。
  */
+/** その日に使った一番大きい番号（控え・経費共通・鍵の頭で引く）。無ければ 0。 */
+function usedSeq(head) {
+  var n = Number((loadSaved().seqUsed || {})[head]);
+  return isFinite(n) && n > 0 ? n : 0;
+}
+/** 使った番号を覚える。🔴 **控えの保存に成功した後に**呼ぶ（失敗した控えの番号は覚えない）。
+ *  覚えられなくても控えは止めない（そのときは残っている行の最大から数える＝以前と同じ）。 */
+function markSeqUsed(head, seq) {
+  saveSaved({ seqUsed: withSeqUsed(loadSaved().seqUsed || {}, head, seq, todayKey()) });
+}
+
 function deviceId() {
   var saved = loadSaved();
   if (saved.device && String(saved.device).length === 4) return saved.device;
@@ -1350,18 +1390,21 @@ function addExpense() {
 
   var items = loadExpenses();
   var dev = deviceId();
+  var head = expenseKey(expState.date, "", dev);
+  var seq = nextExpenseSeq(items, expState.date, dev, usedSeq(head));
   items.push({
     d: expState.date,
     a: Math.round(amount),
     c: expState.cat,
     m: expenseMemo(el("expMemo").value),
-    k: expenseKey(expState.date, nextExpenseSeq(items, expState.date, dev), dev),
+    k: expenseKey(expState.date, seq, dev),
     s: ""
   });
   if (!saveExpenses(items)) {
     expErr("この iPhone に控えを保存できませんでした。空き容量を確かめてください（まだ記録できていません）。");
     return;
   }
+  markSeqUsed(head, seq);          // 消しても番号が戻らないように（2026-09-25）
   // 入れた品の値は残さない（次の1件と混ざる＝計算機が仕入値を覚えないのと同じ理由）
   el("expAmount").value = "";
   el("expMemo").value = "";
