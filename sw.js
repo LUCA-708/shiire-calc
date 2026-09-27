@@ -11,7 +11,8 @@
        版番号を上げ忘れたことは機械では分からない＝人が気をつける）
 */
 
-var CACHE = "shiire-v13";
+var PREFIX = "shiire-";
+var CACHE = PREFIX + "v14";
 
 // 控える物の一覧。"./" は入口（ホーム画面のアイコンが開くアドレス）＝中身は index.html
 var FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png"];
@@ -20,11 +21,19 @@ var FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png"];
 // 🔴 そろわなかったら書かない＝嘘を出さないため。
 var MARK = "./__offline_ok";
 
+// 控えを作った日（日本時間の日付。toISOString は世界標準時なので朝9時前は前の日になる）
+function localDay(d) {
+  function p(n) { return (n < 10 ? "0" : "") + n; }
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+
 self.addEventListener("install", function (e) {
   e.waitUntil(
     caches.open(CACHE).then(function (c) {
-      return c.addAll(FILES).then(function () {
-        var body = JSON.stringify({ cache: CACHE, files: FILES, cachedOn: new Date().toISOString().slice(0, 10) });
+      // 🔴 cache:"reload"＝ブラウザの一時置き場（GitHub Pages は10分持つ）を通さず必ず取り直す。
+      //    通すと、公開から10分以内の直しで「新しい版の控えに古い画面」が入り、次の版まで直らない
+      return c.addAll(FILES.map(function (f) { return new Request(f, { cache: "reload" }); })).then(function () {
+        var body = JSON.stringify({ cache: CACHE, files: FILES, cachedOn: localDay(new Date()) });
         return c.put(MARK, new Response(body, { headers: { "Content-Type": "application/json" } }));
       });
     }).then(function () { return self.skipWaiting(); })
@@ -34,7 +43,12 @@ self.addEventListener("install", function (e) {
 self.addEventListener("activate", function (e) {
   e.waitUntil(
     caches.keys().then(function (names) {
-      return Promise.all(names.map(function (n) { return n === CACHE ? null : caches.delete(n); }));
+      // 🔴 消すのは**自分の名前（PREFIX）で始まる古い控えだけ**（2026-09-26）。
+      //    📱タスク（todo-…）と同じ住所で動くので控えの置き場は共有＝「自分以外を全部消す」と
+      //    計算機を更新したときにタスクの控えまで消し、タスクが電波の無い所で開けなくなる。
+      return Promise.all(names.map(function (n) {
+        return n.indexOf(PREFIX) === 0 && n !== CACHE ? caches.delete(n) : null;
+      }));
     }).then(function () { return self.clients.claim(); })
   );
 });
