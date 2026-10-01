@@ -90,16 +90,18 @@ input.missing{border-color:#e05561}
 .qstamp{margin-top:8px;font-size:11px;color:#697182}
 .qstamp.old{color:#ffd479}
 
-/* 商品ランク（折りたたみ） */
-details{background:#1b1f2b;border:1px dashed #4a5468;border-radius:10px;margin-bottom:12px}
-summary{padding:10px 12px;font-size:12px;color:#9aa3b5;cursor:pointer;list-style:none}
+/* 商品ランク（折りたたみ）。🔴 見出しは「📦 送り方から選ぶ」（.qbtn）と同じ見た目（2026-10-01 ユーザー指摘）
+   ＝どちらも品ごとに選ぶ項目。以前の薄い点線の見出しは目立たず、選び忘れを招いた */
+details{margin-bottom:12px}
+summary{background:#1b2a40;border:2px solid #31527f;border-radius:10px;padding:10px;
+        font-size:14px;color:#cfe0ff;cursor:pointer;list-style:none;user-select:none}
 summary::-webkit-details-marker{display:none}
-summary::before{content:"▸ ";color:#c79a3a}
-details[open] summary::before{content:"▾ "}
+summary::after{content:" ▼"}
+details[open] summary::after{content:" ▲"}
 /* ランクの説明。開いたときだけ見える（閉じた見出しの長さは変えない） */
-.ranknote{padding:0 12px 8px;font-size:11.5px;color:#8a93a5;line-height:1.6}
+.ranknote{padding:0 2px 8px;font-size:11.5px;color:#8a93a5;line-height:1.6}
 .ranknote b{color:#ffd479}
-.ranks{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 10px}
+.ranks{display:flex;flex-wrap:wrap;gap:6px}
 .ranks .chip{flex:0 0 calc(25% - 5px)}
 
 /* 未入力の注意 */
@@ -254,7 +256,8 @@ details[open] summary::before{content:"▾ "}
 </div>
 
 <details id="rankBox">
-  <summary>商品の状態（新品／中古のランク）　<span id="rankNow" style="color:#ffd479">A 1.00</span></summary>
+  <summary>🏷 商品の状態（新品／中古）　<span id="rankNow" style="color:#ffd479">A 1.00</span></summary>
+  <div class="qpanel">
   <!-- 🔴 説明は**開いたときだけ**出す（閉じた見出しは今のまま＝画面が伸びない）。
        間違えて押したときは開いているので、その場面ではちゃんと読める。
        🔴「新品は A」とは書かない＝「新品級」（1.10）が別にあり、選び間違いを招く。 -->
@@ -262,6 +265,7 @@ details[open] summary::before{content:"▾ "}
     <b>新品級</b>は「<b>新品同様の中古</b>」＝別物です。中古は、迷ったら <b>A</b>（1.00）。<br>
     新品級・S は売値を<b>高め</b>に、B から下は<b>低め</b>に見ます。</div>
   <div class="ranks" id="rankChips"></div>
+  </div>
 </details>
 
 <div id="warn" class="warn hidden"></div>
