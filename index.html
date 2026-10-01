@@ -61,6 +61,35 @@ input.missing{border-color:#e05561}
 .chip[aria-pressed="true"]{background:#3a2f1a;border-color:#c79a3a;color:#ffd479}
 .hidden{display:none !important}
 
+/* 📦 発送方法の早見（2026-10-01）。土台・札・折りたたみは既存の部品と同じ色 */
+.chips.wrap{flex-wrap:wrap}
+.chips.wrap .chip{flex:0 0 calc(25% - 5px)}
+.qbtn{width:100%;margin-top:8px;background:#1b2a40;border:2px solid #31527f;border-radius:10px;
+      padding:10px;font-size:14px;color:#cfe0ff;font-family:inherit;cursor:pointer;text-align:left}
+.qpanel{background:#1b1f2b;border:1px dashed #4a5468;border-radius:10px;padding:10px;margin-top:8px}
+.qh{font-size:12.5px;color:#cfd6e4;margin:10px 0 2px;font-weight:bold}
+.qh:first-child{margin-top:0}
+.qsub{font-size:11px;color:#8a93a5;margin-top:6px}
+.qsub2{font-size:10.5px;color:#8a93a5;font-weight:normal;margin-left:6px}
+.qc{display:flex;align-items:center;gap:8px;background:#1e2330;border:2px solid #2c3243;border-radius:10px;
+    padding:7px 9px;margin-top:6px;cursor:pointer}
+.qc.best{border-color:#2ecc71}
+.qc.sel{background:#173326}
+.qc .qmid{flex:1;min-width:0}
+.qc .qn{font-size:14px;color:#e9ecf3}
+.qc .qcd{font-size:11px;color:#8a93a5}
+.qc .qp{font-size:17px;font-weight:bold;text-align:right;white-space:nowrap}
+.qc .qp small{display:block;font-size:10px;color:#8a93a5;font-weight:normal}
+.qstar{font-size:20px;color:#e0b33a;width:26px;text-align:center;flex:none}
+.qstar.off{color:#4a5165}
+.qbest{font-size:10px;background:#2ecc71;color:#08210f;border-radius:5px;padding:0 5px;margin-left:5px}
+.qsum{margin-top:10px;font-size:13px;color:#b9c2d2}
+.qsum b{font-size:19px;color:#7ff0a8}
+.qred{margin-top:6px;background:#2c1618;border:1px solid #e05561;border-radius:8px;padding:7px 9px;font-size:12.5px;color:#ffb3b3}
+.qnote{margin-top:6px;background:#3a2f1a;border:1px solid #c79a3a;border-radius:8px;padding:7px 9px;font-size:12px;color:#ffd479;line-height:1.55}
+.qstamp{margin-top:8px;font-size:11px;color:#697182}
+.qstamp.old{color:#ffd479}
+
 /* 商品ランク（折りたたみ） */
 details{background:#1b1f2b;border:1px dashed #4a5468;border-radius:10px;margin-bottom:12px}
 summary{padding:10px 12px;font-size:12px;color:#9aa3b5;cursor:pointer;list-style:none}
@@ -182,12 +211,34 @@ details[open] summary::before{content:"▾ "}
 </div>
 
 <div class="row">
-  <div class="lab"><span>③ 送料・梱包</span><span class="mem">🔸覚える</span></div>
+  <!-- 🔴 ③は販売先ごとに覚える（saved.ships・2026-10-01）。ヤフオクは落札者負担＝梱包だけ -->
+  <div class="lab"><span id="shipLab">③ 送料・梱包</span><span class="mem">🔸覚える</span></div>
   <input id="ship" type="number" inputmode="numeric" placeholder="例：1500">
   <div class="chips" id="shipChips">
     <div class="chip" data-v="800">小 800</div>
     <div class="chip" data-v="1500">中 1,500</div>
     <div class="chip" data-v="3000">大 3,000</div>
+  </div>
+  <div class="chips hidden" id="yPackChips"></div>
+  <div class="qnote hidden" id="yNote">ヤフオクは<b>落札者が送料を払う</b>前提です。③は梱包だけを入れます（送料は引きません）。</div>
+
+  <!-- 📦 発送方法の早見（メルカリのときだけ）。開閉は覚えない＝毎回閉じて始まる -->
+  <button class="qbtn hidden" id="qOpen" type="button">📦 送り方から選ぶ ▼</button>
+  <div class="qpanel hidden" id="qPanel">
+    <div class="qh">大きさ（だいたいでOK）</div>
+    <div class="qsub">3辺の合計</div><div class="chips wrap" id="qSz"></div>
+    <div class="qsub">厚さ</div><div class="chips wrap" id="qTh"></div>
+    <div class="qsub">重さ</div><div class="chips wrap" id="qWt"></div>
+    <div class="qh">送れる方法（安い順）<span class="qsub2">☆で一覧に出す／出さない</span></div>
+    <div id="qList"></div>
+    <div class="qred hidden" id="qZero">この大きさで送れる方法がありません。③は変えていないので、手で入れてください</div>
+    <div class="foldrow hidden" id="qMore"></div>
+    <div id="qOthers" class="hidden"></div>
+    <div class="qh">梱包材の上乗せ <span class="mem">🔸覚える</span></div>
+    <div class="chips" id="qPack"></div>
+    <div class="qsum" id="qSum"></div>
+    <div class="qnote hidden" id="qNote"></div>
+    <div class="qstamp" id="qStamp"></div>
   </div>
 </div>
 
@@ -762,6 +813,116 @@ function keepProblem(text, profit) {
   return "";
 }
 
+// ── 📦 発送方法の早見（2026-10-01）────────────────────────────
+// 大きさを札で選ぶと、送れる方法が安い順に出て、押すと③に入る。
+// 🔴 料金は人が直す数字＝必ず古くなる。直したら SHIP_RATES_ON も一緒に直すこと
+//    （画面に時点を出し、半年を過ぎたら黄色にする＝ratesStale）。
+// 出典＝メルカリ公式ヘルプ（help.jp.mercari.com/guide/articles/134・834・135・816・136・176・177・1479・1487）
+//       と送料一覧（jp-news.mercari.com/contents/1882・2026-02-05版）。2026-10-01 に確認。
+var SHIP_RATES_ON = "2026-02-05";
+var SHIP_STALE_DAYS = 183;          // 半年
+var SHIP_ANY = 999;                 // 「それ以上」「制限なし」
+// 1件＝{n:名前, p:送料, box:必須の専用資材代, sz:3辺合計の上限, th:厚さの上限, wt:重さの上限kg,
+//       c:条件の説明, grp:サイズ違いの組（宅急便・ゆうパック）, star:最初から★}
+// 🔴 box は**必須の資材だけ**入れる（K）。比べる値＝送料＋box。任意の資材（ゆうパケットポストの箱）は入れない
+//    ＝シールでも送れるので、入れると実際より高い順位に並ぶ。
+// 🔴 ヤフオクは**落札者負担**が基本（2026-10-01 ユーザー）＝表は空。出品者負担を足すときはここに入れる。
+var SHIP_TABLE = {
+  mercari: [
+    { n: "ネコポス", p: 210, box: 0, sz: 60, th: 3, wt: 1, star: true,
+      c: "長辺34cm・厚さ3cm・1kgまで" },
+    { n: "ゆうパケットポスト", p: 215, box: 0, sz: 60, th: 3, wt: 2, star: true,
+      c: "専用箱（別売）か発送用シール・ポストに入る厚さ・2kgまで" },
+    { n: "宅急便コンパクト", p: 450, box: 70, sz: 60, th: 5, wt: SHIP_ANY, star: true,
+      c: "専用BOX（25×20×5cm）が必要" },
+    { n: "ゆうパケットプラス", p: 455, box: 65, sz: 60, th: 7, wt: 2, star: true,
+      c: "専用箱（24×17×7cm）が必要・2kgまで" },
+    { n: "ゆうパケットポストmini", p: 160, box: 0, sz: 40, th: 3, wt: 2, star: false,
+      c: "専用封筒（21×17cm・封筒代は別）に入る物" },
+    { n: "ゆうパケット", p: 230, box: 0, sz: 60, th: 3, wt: 1, star: false,
+      c: "長辺34cm・厚さ3cm・1kgまで" },
+    { n: "宅急便 60",  p: 750,  box: 0, sz: 60,  th: SHIP_ANY, wt: 2,  grp: "宅急便", star: true, c: "3辺60cm・2kgまで" },
+    { n: "宅急便 80",  p: 850,  box: 0, sz: 80,  th: SHIP_ANY, wt: 5,  grp: "宅急便", star: true, c: "3辺80cm・5kgまで" },
+    { n: "宅急便 100", p: 1050, box: 0, sz: 100, th: SHIP_ANY, wt: 10, grp: "宅急便", star: true, c: "3辺100cm・10kgまで" },
+    { n: "宅急便 120", p: 1200, box: 0, sz: 120, th: SHIP_ANY, wt: 15, grp: "宅急便", star: true, c: "3辺120cm・15kgまで" },
+    { n: "宅急便 140", p: 1450, box: 0, sz: 140, th: SHIP_ANY, wt: 20, grp: "宅急便", star: true, c: "3辺140cm・20kgまで" },
+    { n: "宅急便 160", p: 1700, box: 0, sz: 160, th: SHIP_ANY, wt: 25, grp: "宅急便", star: true, c: "3辺160cm・25kgまで" },
+    { n: "ゆうパック 60",  p: 750,  box: 0, sz: 60,  th: SHIP_ANY, wt: 25, grp: "ゆうパック", star: false, c: "3辺60cm・25kgまで" },
+    { n: "ゆうパック 80",  p: 870,  box: 0, sz: 80,  th: SHIP_ANY, wt: 25, grp: "ゆうパック", star: false, c: "3辺80cm・25kgまで" },
+    { n: "ゆうパック 100", p: 1070, box: 0, sz: 100, th: SHIP_ANY, wt: 25, grp: "ゆうパック", star: false, c: "3辺100cm・25kgまで" },
+    { n: "ゆうパック 120", p: 1200, box: 0, sz: 120, th: SHIP_ANY, wt: 25, grp: "ゆうパック", star: false, c: "3辺120cm・25kgまで" },
+    { n: "ゆうパック 140", p: 1450, box: 0, sz: 140, th: SHIP_ANY, wt: 25, grp: "ゆうパック", star: false, c: "3辺140cm・25kgまで" },
+    { n: "ゆうパック 160", p: 1700, box: 0, sz: 160, th: SHIP_ANY, wt: 25, grp: "ゆうパック", star: false, c: "3辺160cm・25kgまで" },
+    { n: "エコメルカリ便", p: 730, box: 0, sz: 160, th: SHIP_ANY, wt: 10, star: false,
+      c: "駅・コンビニからは100サイズまで・届くまで日数がかかる" }
+  ],
+  yahoo: []
+};
+// 大きさの札。SHIP_ANY＝「それ以上」（どの送り方にも入らない＝手で入れる）
+var SHIP_SIZES = [40, 60, 80, 100, 120, 140, 160, SHIP_ANY];
+var SHIP_THICKS = [2, 3, 5, 7, SHIP_ANY];
+var SHIP_WEIGHTS = [1, 2, 5, 10];
+// 梱包材の上乗せ（D・ヤフオクの③）。⚠ 金額は仮＝実際と違えば直す
+var SHIP_PACKS = [{ n: "なし", p: 0 }, { n: "袋", p: 30 }, { n: "箱(小)", p: 70 }, { n: "箱(中)", p: 150 }];
+
+/** 送り方の比べる値＝送料＋必須の専用資材代。 */
+function shipTotal(m) { return m.p + (m.box || 0); }
+/** ★と「選んだ送り方」を覚えるときの名前＝組があれば組の名前（大きさが変わっても同じ物とみなす）。 */
+function shipKey(m) { return m.grp || m.n; }
+function shipFits(m, size) { return size.sz <= m.sz && size.th <= m.th && size.wt <= m.wt; }
+/** 最初から★の付いている名前の一覧（組は1つにまとめる）。 */
+function defaultShipStars(table) {
+  var out = [];
+  (table || []).forEach(function (m) { if (m.star && out.indexOf(shipKey(m)) < 0) out.push(shipKey(m)); });
+  return out;
+}
+/** この大きさで送れる方法を安い順に。→ {stars:[…], others:[…]}（どちらも空なら送れない）
+ *  組（宅急便・ゆうパック）は入る中で一番安い＝一番小さいサイズ1つだけ出す。
+ *  stars が null なら最初の★（defaultShipStars）を使う。 */
+function shipCandidates(table, size, stars) {
+  var star = stars || defaultShipStars(table);
+  var ok = (table || []).map(function (m, i) { return { m: m, i: i }; })
+    .filter(function (x) { return shipFits(x.m, size); })
+    .sort(function (a, b) { return (shipTotal(a.m) - shipTotal(b.m)) || (a.i - b.i); })
+    .map(function (x) { return x.m; });
+  var seen = {}, list = [];
+  ok.forEach(function (m) {
+    if (m.grp) { if (seen[m.grp]) return; seen[m.grp] = 1; }
+    list.push(m);
+  });
+  return {
+    stars: list.filter(function (m) { return star.indexOf(shipKey(m)) >= 0; }),
+    others: list.filter(function (m) { return star.indexOf(shipKey(m)) < 0; })
+  };
+}
+/** 前に選んだ送り方（key）が今も送れるならそれ、無ければ一番安いもの（★を優先）。
+ *  → {m: 送り方 or null, changed: 前の選択から変えたか}
+ *  🔴 changed は画面で一言出すため（黙って別の送り方の料金で計算しない）。 */
+function resolvePick(cands, key) {
+  var all = cands.stars.concat(cands.others);
+  for (var i = 0; i < all.length; i++) if (shipKey(all[i]) === key) return { m: all[i], changed: false };
+  var first = cands.stars[0] || cands.others[0] || null;
+  return { m: first, changed: !!key && !!first };
+}
+/** 料金表が半年より古いか（today・on は YYYY-MM-DD）。 */
+function ratesStale(today, on) {
+  function t(s) { var p = String(s).split("-"); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
+  return (t(today) - t(on)) / 86400000 > SHIP_STALE_DAYS;
+}
+/** 販売先ごとの③の値。古い保存（ship 1本を全販売先で共有）からの引き継ぎもここで決める。
+ *  🔴 ヤフオクは落札者負担＝③は梱包だけ。引き継ぎで前の送料（例 1,500）を持ち込まない。 */
+function shipOf(saved, plat) {
+  var ships = (saved && saved.ships) || {};
+  if (isNum(ships[plat])) return ships[plat];
+  if (plat === "yahoo") return 0;
+  return (saved && isNum(saved.ship)) ? saved.ship : 1500;   // fees.json の default_shipping_size = medium
+}
+/** ③の内訳の文。例「ネコポス 210＋袋 30」「宅急便コンパクト 450＋専用資材 70＋梱包なし」 */
+function shipBreakdown(m, pack) {
+  return m.n + " " + m.p + (m.box ? "＋専用資材 " + m.box : "")
+    + "＋" + (pack && pack.p ? pack.n + " " + pack.p : "梱包なし");
+}
+
 // ===CALC-END===
 
 // ── ここから下は画面まわり ──────────────────────────
@@ -913,7 +1074,204 @@ function switchPlatform(plat) {
   // FBA 欄は Amazon のときだけ出す（灰色で残さない）
   el("fbaRow").classList.toggle("hidden", !conf.fba);
 
-  update();   // 🔴 仕入値・送料・ランクはそのまま残す＝タップ1つで見比べられる
+  // ③は販売先ごとに覚えた値（ヤフオクは梱包だけ）。🔴 仕入値・ランクはそのまま残す
+  el("ship").value = shipOf(saved, plat);
+  setupShipRow();
+  update();   // タップ1つで見比べられる
+}
+
+// ── 📦 ③の欄（販売先ごとの出し分け・発送方法の早見）2026-10-01 ─────────────
+var quickOpen = false;       // 開閉は覚えない（毎回閉じて始まる）
+var quickShowOthers = false;
+var quickNote = "";          // 選び直したときの一言（次に描くまで出す）
+
+/** ③の値を、今の販売先の分として画面と保存の両方に入れる。 */
+function setShip(v) {
+  el("ship").value = v;
+  saveShipFor(state.plat, v);
+}
+function saveShipFor(plat, v) {
+  var ships = loadSaved().ships || {};
+  ships[plat] = v;
+  saveSaved({ ships: ships });
+}
+function quickPick() {
+  var p = loadSaved().shipPick || {};
+  return { sz: isNum(p.sz) ? p.sz : 60, th: isNum(p.th) ? p.th : 3, wt: isNum(p.wt) ? p.wt : 1,
+           key: p.key || "", pkg: isNum(p.pkg) ? p.pkg : 0, manual: !!p.manual };
+}
+function saveQuickPick(patch) {
+  var p = quickPick();
+  for (var k in patch) p[k] = patch[k];
+  saveSaved({ shipPick: p });
+}
+function quickStars() {
+  var s = loadSaved().shipStars;
+  return Array.isArray(s) ? s : defaultShipStars(SHIP_TABLE[state.plat]);
+}
+function packOf(v) {
+  for (var i = 0; i < SHIP_PACKS.length; i++) if (SHIP_PACKS[i].p === v) return SHIP_PACKS[i];
+  return { n: "梱包", p: v };
+}
+/** 早見の今の候補と選んでいる送り方。 */
+function quickNow() {
+  var pick = quickPick();
+  var cands = shipCandidates(SHIP_TABLE[state.plat], pick, quickStars());
+  return { pick: pick, cands: cands, r: resolvePick(cands, pick.key) };
+}
+/** 選んでいる送り方の金額を③に入れる。🔴 送れる方法が0件なら③は変えない（#3） */
+function applyQuick() {
+  var q = quickNow();
+  quickNote = "";
+  if (!q.r.m) return;
+  if (q.r.changed) {
+    quickNote = "前に選んだ「" + q.pick.key + "」はこの大きさでは送れないので、「" + q.r.m.n + "」にしました";
+  }
+  saveQuickPick({ key: shipKey(q.r.m), manual: false });
+  setShip(shipTotal(q.r.m) + q.pick.pkg);
+}
+
+/** ③を手で打った／小中大を押した。#4 メルカリで送り方を選んでいたら内訳を「手入力」に切り替える。 */
+function shipTouchedByHand() {
+  var table = SHIP_TABLE[state.plat];
+  if (table && table.length && quickPick().key) saveQuickPick({ manual: true });
+  quickNote = "";
+  renderShipRow();
+}
+
+function chipRow(box, list, label, cur, onPick) {
+  box.innerHTML = "";
+  list.forEach(function (v) {
+    var c = document.createElement("div");
+    c.className = "chip";
+    c.textContent = label(v);
+    c.setAttribute("aria-pressed", String(v === cur));
+    c.addEventListener("click", function () { onPick(v); });
+    box.appendChild(c);
+  });
+}
+
+/** 販売先に合わせて③の欄を出し分ける（切り替えたとき・起動したとき）。 */
+function setupShipRow() {
+  var plat = state.plat;
+  var yahoo = plat === "yahoo";
+  el("shipLab").textContent = yahoo ? "③ 梱包（送料は落札者が払う）" : "③ 送料・梱包";
+  show("shipChips", !yahoo);
+  show("yPackChips", yahoo);
+  show("yNote", yahoo);
+  quickOpen = false; quickShowOthers = false; quickNote = "";
+  // 🔴 メルカリで送り方を選んだまま（手で直していない）なら、今の料金表で③を合わせ直す
+  //    ＝料金表を直して公開した日に、覚えていた古い金額で計算し続けない
+  if (SHIP_TABLE[plat] && SHIP_TABLE[plat].length) {
+    var pick = quickPick();
+    if (pick.key && !pick.manual) applyQuick();
+    quickNote = "";
+  }
+  renderShipRow();
+}
+
+/** ③まわりの札・早見の欄を描き直す（③の値が変わるたびに呼ぶ）。 */
+function renderShipRow() {
+  var ship = numOf(el("ship"));
+  if (state.plat === "yahoo") {
+    chipRow(el("yPackChips"), SHIP_PACKS.map(function (p) { return p.p; }),
+      function (v) { var p = packOf(v); return p.p ? p.n + " " + p.p : p.n; }, ship,
+      function (v) { setShip(v); renderShipRow(); update(); });
+  }
+  var table = SHIP_TABLE[state.plat];
+  var has = !!(table && table.length);
+  show("qOpen", has);
+  show("qPanel", has && quickOpen);
+  if (!has) return;
+
+  var q = quickNow();
+  var m = q.r.m;
+  var using = q.pick.key && !q.pick.manual && m;
+  el("qOpen").textContent = (using ? "📦 " + m.n + " " + yen(shipTotal(m) + q.pick.pkg) + "円" : "📦 送り方から選ぶ")
+    + (quickOpen ? " ▲" : " ▼");
+  if (!quickOpen) return;
+
+  function size(v) { return v === SHIP_ANY ? "それ以上" : "〜" + v; }
+  function pickSize(field) {
+    return function (v) {
+      var patch = {}; patch[field] = v; saveQuickPick(patch);
+      applyQuick(); renderShipRow(); update();
+    };
+  }
+  chipRow(el("qSz"), SHIP_SIZES, size, q.pick.sz, pickSize("sz"));
+  chipRow(el("qTh"), SHIP_THICKS, function (v) { return v === SHIP_ANY ? "それ以上" : "〜" + v + "cm"; }, q.pick.th, pickSize("th"));
+  chipRow(el("qWt"), SHIP_WEIGHTS, function (v) { return "〜" + v + "kg"; }, q.pick.wt, pickSize("wt"));
+
+  var stars = quickStars();
+  function rowOf(c, best) {
+    var d = document.createElement("div");
+    var on = using && shipKey(c) === shipKey(m);
+    d.className = "qc" + (best ? " best" : "") + (on ? " sel" : "");
+    var st = stars.indexOf(shipKey(c)) >= 0;
+    d.innerHTML = '<div class="qstar' + (st ? "" : " off") + '">' + (st ? "★" : "☆") + "</div>"
+      + '<div class="qmid"><div class="qn">' + (on ? "✅ " : "") + esc(c.n)
+      + (best ? '<span class="qbest">いちばん安い</span>' : "") + "</div>"
+      + '<div class="qcd">' + esc(c.c) + "</div></div>"
+      + '<div class="qp">' + yen(shipTotal(c)) + (c.box ? "<small>送料 " + c.p + "＋資材 " + c.box + "</small>" : "") + "</div>";
+    d.querySelector(".qstar").addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      var s = quickStars().slice(), k = shipKey(c), i = s.indexOf(k);
+      if (i >= 0) s.splice(i, 1); else s.push(k);
+      saveSaved({ shipStars: s });
+      renderShipRow();
+    });
+    d.addEventListener("click", function () {
+      quickNote = "";
+      saveQuickPick({ key: shipKey(c), manual: false });
+      setShip(shipTotal(c) + q.pick.pkg);
+      renderShipRow(); update();
+    });
+    return d;
+  }
+  var list = el("qList"); list.innerHTML = "";
+  var cheapest = q.cands.stars.concat(q.cands.others).sort(function (a, b) { return shipTotal(a) - shipTotal(b); })[0];
+  q.cands.stars.forEach(function (c) { list.appendChild(rowOf(c, c === cheapest)); });
+  var none = !q.cands.stars.length && !q.cands.others.length;
+  show("qZero", none);
+  if (!none && !q.cands.stars.length) {
+    var s0 = document.createElement("div");
+    s0.className = "qsub";
+    s0.textContent = "★の付いた送り方には入りません。下の「ほかの送り方」を見てください";
+    list.appendChild(s0);
+  }
+  var nOther = q.cands.others.length;
+  show("qMore", nOther > 0);
+  el("qMore").textContent = (quickShowOthers ? "▾ " : "▸ ") + "ほかの送り方 " + nOther + "件";
+  show("qOthers", nOther > 0 && quickShowOthers);
+  var others = el("qOthers"); others.innerHTML = "";
+  q.cands.others.forEach(function (c) { others.appendChild(rowOf(c, c === cheapest)); });
+
+  chipRow(el("qPack"), SHIP_PACKS.map(function (p) { return p.p; }),
+    function (v) { var p = packOf(v); return p.p ? p.n + " " + p.p : p.n; }, q.pick.pkg,
+    function (v) {
+      saveQuickPick({ pkg: v });
+      if (quickPick().key && !quickPick().manual) applyQuick();
+      renderShipRow(); update();
+    });
+
+  // E 内訳。#4 ③を手で直したら「手入力」と正直に出す（送り方の内訳のまま残さない）
+  if (using) {
+    el("qSum").innerHTML = "③に入る金額＝<b>" + yen(shipTotal(m) + q.pick.pkg) + "</b> 円<br>"
+      + '<span class="qsub">' + esc(shipBreakdown(m, packOf(q.pick.pkg))) + "</span>";
+  } else if (q.pick.manual) {
+    el("qSum").innerHTML = "③は<b>手入力 " + (ship === null ? "—" : yen(ship)) + "</b> 円です<br>"
+      + '<span class="qsub">送り方を押すと、その金額に戻ります</span>';
+  } else {
+    el("qSum").innerHTML = '<span class="qsub">送り方を押すと③に入ります</span>';
+  }
+  show("qNote", !!quickNote);
+  el("qNote").textContent = quickNote;
+
+  var old = ratesStale(todayKey(), SHIP_RATES_ON);
+  el("qStamp").className = "qstamp" + (old ? " old" : "");
+  el("qStamp").textContent = old
+    ? "⚠ 料金は " + SHIP_RATES_ON + " 時点＝半年以上たっています。値上げしていないか確かめてください"
+    : "料金は " + SHIP_RATES_ON + " 時点（メルカリ公式）";
 }
 
 // ── 計算して画面に出す ──────────────────────────
@@ -990,7 +1348,8 @@ function update() {
     + '<div class="sm2">' + (roi === null ? "元手ゼロのため割合は出せません"
         : "元手 " + yen(cost + ship) + " 円に対して " + roi.toFixed(1) + "%") + "</div>"
     + '<div class="sm2">引かれるお金 ' + yen(fees) + " 円（手数料 " + yen(ref)
-        + (conf.fba ? "＋FBA " + yen(fba) : "") + "＋送料 " + yen(ship) + "）</div>"
+        + (conf.fba ? "＋FBA " + yen(fba) : "")
+        + (state.plat === "yahoo" ? "＋梱包 " : "＋送料 ") + yen(ship) + "）</div>"
     + (rankNote ? '<div class="sm2">' + rankNote + "</div>" : "");
   show("res", true);
 
@@ -1609,8 +1968,7 @@ function start() {
   el("checkedOn").textContent = FEE_CHECKED_ON;
 
   var saved = loadSaved();
-  if (saved.ship !== undefined) el("ship").value = saved.ship;
-  else el("ship").value = 1500;                       // fees.json の default_shipping_size = medium
+  // ③の値は switchPlatform() が販売先ごとに入れる（shipOf＝古い保存 ship からの引き継ぎもそこ）
   if (saved.target !== undefined) state.target = saved.target;
 
   // 店名＝その日だけ覚える。日が変わっていたら画面にも保存にも残さない
@@ -1625,15 +1983,23 @@ function start() {
   });
   Array.prototype.forEach.call(el("shipChips").children, function (c) {
     c.addEventListener("click", function () {
-      el("ship").value = c.dataset.v;
-      saveSaved({ ship: Number(c.dataset.v) });
+      setShip(Number(c.dataset.v));
+      shipTouchedByHand();
       update();
     });
+  });
+  el("qOpen").addEventListener("click", function () {
+    quickOpen = !quickOpen;
+    renderShipRow();
+  });
+  el("qMore").addEventListener("click", function () {
+    quickShowOthers = !quickShowOthers;
+    renderShipRow();
   });
 
   ["cost", "sell", "ship", "rate", "fba", "memo", "qty", "store"].forEach(function (id) {
     el(id).addEventListener("input", function () {
-      if (id === "ship") saveSaved({ ship: numOf(el("ship")) });
+      if (id === "ship") { saveShipFor(state.plat, numOf(el("ship"))); shipTouchedByHand(); }
       if (id === "rate") { var v = numOf(el("rate")); if (v !== null) saveRate(v); }
       // 🔴 個数は覚えない（品ごとに変わる＝仕入値・売値を覚えないのと同じ理由）
       if (id === "store") saveSaved({ store: el("store").value, storeDate: todayKey() });

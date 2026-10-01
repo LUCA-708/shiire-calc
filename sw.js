@@ -12,7 +12,7 @@
 */
 
 var PREFIX = "shiire-";
-var CACHE = PREFIX + "v14";
+var CACHE = PREFIX + "v15";
 
 // 控える物の一覧。"./" は入口（ホーム画面のアイコンが開くアドレス）＝中身は index.html
 var FILES = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png"];
