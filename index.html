@@ -181,6 +181,9 @@ details[open] summary::after{content:" ▲"}
 </head>
 <body>
 
+<!-- 保存データが読めなかったときの知らせ（2026-11-06）。readStore が退避した／退避できなかったときだけ出る -->
+<div id="brokenBar" class="msg ng hidden" style="margin:8px 0;white-space:pre-line"></div>
+
 <div class="ptabs" role="tablist" id="pageTabs">
   <!-- 🔴 それぞれのタブには**そのタブ自身の未送信件数**だけを出す（2026-09-17）。
        他方の件数を相手のタブに出すと何の数か分からなくなる、が 09-17 の判断。
@@ -933,6 +936,35 @@ function shipBreakdown(m, pack) {
     + "＋" + (pack && pack.p ? pack.n + " " + pack.p : "梱包なし");
 }
 
+/** 保存の箱を1つ読む（2026-11-06 TOOL-CTX2）。→ { value, note, locked }
+ *  🔴 以前は JSON が壊れていると {}／[] を返すだけ＝次の保存で元の中身が**黙って消えた**
+ *     （タスク・出勤簿は退避していたのに計算機だけ無かった）。
+ *  壊れていたら：生の文字列を `<key>_broken` へ写す（既にあれば `<key>_broken_<時刻>`＝前の退避を上書きしない）
+ *  → **写せた後で**壊れた本体を消す（毎回同じ物を退避しない）→ note に退避先。
+ *  写せなかったら：本体は消さず locked=true（呼び手は保存を止める＝退避できない中身を上書きしない）。
+ *  store は localStorage と同じ getItem/setItem/removeItem を持つ物（テストでは作り物を渡す）。 */
+function readStore(store, key, wantArray, now) {
+  var empty = function () { return wantArray ? [] : {}; };
+  var raw;
+  try { raw = store.getItem(key); } catch (e) { return { value: empty() }; }   // 覗けない設定でも動く
+  if (raw === null || raw === undefined || raw === "") return { value: empty() };
+  var v, ok = false;
+  try { v = JSON.parse(raw); } catch (e) { v = undefined; }
+  var isArr = Object.prototype.toString.call(v) === "[object Array]";
+  ok = wantArray ? isArr : (v !== null && typeof v === "object" && !isArr);
+  if (ok) return { value: v };
+  var bk = key + "_broken";
+  try {
+    if (store.getItem(bk) !== null) bk = bk + "_" + (now || Date.now());
+    store.setItem(bk, raw);
+    if (store.getItem(bk) !== raw) throw new Error("退避を読み戻せない");
+  } catch (e) {
+    return { value: empty(), locked: true };
+  }
+  try { store.removeItem(key); } catch (e) { /* 消せなくても退避はある＝次に読むとき別名でもう一度退避する */ }
+  return { value: empty(), note: bk };
+}
+
 // ===CALC-END===
 
 // ── ここから下は画面まわり ──────────────────────────
@@ -967,13 +999,37 @@ var state = { plat: "amazon", rank: "a", target: 15 };
 // ── 覚えておく4つ（送料・率・目標利益率・タブ）＋送り先＋店名（その日だけ）──────
 // 🔴 仕入値と売値と個数はわざと覚えない（前の品の数字が残ると、それに気づかず判断してしまう）
 // 🔴 店名だけは別扱い＝同じ店で何件も判定するので覚える。ただし storeForToday() で日をまたいだら忘れる
+// ── 保存の箱を読む共通の入口（2026-11-06 TOOL-CTX2）──────────────────
+// 🔴 3つの箱（設定・控え・経費）は必ず loadBox を通す＝壊れていたら退避してから空で始める。
+//    退避できなかった箱は STORE_LOCKED に入れ、その箱の保存を止める（壊れた中身を上書きしない）。
+var STORE_LOCKED = {};
+var BROKEN_TOLD = {};
+function loadBox(key, wantArray, label) {
+  var r;
+  try { r = readStore(localStorage, key, wantArray); }
+  catch (e) { return wantArray ? [] : {}; }          // localStorage そのものが覗けない設定でも動く
+  if (r.locked) {
+    STORE_LOCKED[key] = true;
+    tellBroken(key, label + "が読めず、退避もできませんでした。消さないよう、この保存を止めています（空きを作って開き直すと、もう一度試します）");
+  } else if (r.note) {
+    tellBroken(key, label + "が読めませんでした。元のデータは退避してあります（" + r.note + "）");
+  }
+  return r.value;
+}
+function tellBroken(key, text) {
+  if (BROKEN_TOLD[key]) return;                      // 同じ箱は1回だけ
+  BROKEN_TOLD[key] = true;
+  var bar = el("brokenBar");
+  if (!bar) return;
+  bar.textContent = (bar.textContent ? bar.textContent + "\n" : "") + "⚠️ " + text;
+  bar.classList.remove("hidden");
+}
+
 function loadSaved() {
-  try {
-    var raw = localStorage.getItem(STORE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch (e) { return {}; }        // 覗けない設定でも動くこと
+  return loadBox(STORE_KEY, false, "設定（送料・率・送り先など）");
 }
 function saveSaved(patch) {
+  if (STORE_LOCKED[STORE_KEY]) return;               // 退避できなかった中身を上書きしない
   try {
     var cur = loadSaved();
     for (var k in patch) { cur[k] = patch[k]; }
@@ -1443,11 +1499,7 @@ function forgetLast() {
 }
 
 function loadKeeps() {
-  try {
-    var raw = localStorage.getItem(KEEP_KEY);
-    var a = raw ? JSON.parse(raw) : [];
-    return Object.prototype.toString.call(a) === "[object Array]" ? a : [];
-  } catch (e) { return []; }
+  return loadBox(KEEP_KEY, true, "仕入れの控え");
 }
 
 /** 控えを保存する。→ 保存できたか（true/false）
@@ -1455,6 +1507,7 @@ function loadKeeps() {
  *     書いたら**読み直して**確かめる（経費の saveExpenses と同じ作法）。
  */
 function saveKeeps(items) {
+  if (STORE_LOCKED[KEEP_KEY]) return false;          // 退避できなかった中身を上書きしない
   try {
     localStorage.setItem(KEEP_KEY, JSON.stringify(items));
     return loadKeeps().length === items.length;
@@ -1661,17 +1714,14 @@ var EXP_KEY = "shiire_calc_exp_v1";
 var expState = { cat: "", date: "", more: false, armed: "", showAll: false };
 
 function loadExpenses() {
-  try {
-    var raw = localStorage.getItem(EXP_KEY);
-    var a = raw ? JSON.parse(raw) : [];
-    return Object.prototype.toString.call(a) === "[object Array]" ? a : [];
-  } catch (e) { return []; }
+  return loadBox(EXP_KEY, true, "経費の控え");
 }
 /** 控えを保存する。→ 保存できたか（true/false）
  *  🔴 黙って失敗させない。保管庫が満杯・覗けない設定のとき、
  *     「控えたのに何も起きない」＝一番気づけない壊れ方になる。書いたら**読み直して**確かめる。
  */
 function saveExpenses(items) {
+  if (STORE_LOCKED[EXP_KEY]) return false;           // 退避できなかった中身を上書きしない
   try {
     localStorage.setItem(EXP_KEY, JSON.stringify(items));
     return loadExpenses().length === items.length;
