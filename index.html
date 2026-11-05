@@ -83,6 +83,7 @@ input.missing{border-color:#e05561}
 .qstar{font-size:20px;color:#e0b33a;width:26px;text-align:center;flex:none}
 .qstar.off{color:#4a5165}
 .qbest{font-size:10px;background:#2ecc71;color:#08210f;border-radius:5px;padding:0 5px;margin-left:5px}
+.qcheap{color:#2ecc71;font-weight:bold}
 .qsum{margin-top:10px;font-size:13px;color:#b9c2d2}
 .qsum b{font-size:19px;color:#7ff0a8}
 .qred{margin-top:6px;background:#2c1618;border:1px solid #e05561;border-radius:8px;padding:7px 9px;font-size:12.5px;color:#ffb3b3}
@@ -866,7 +867,9 @@ var SHIP_TABLE = {
 // 大きさの札。SHIP_ANY＝「それ以上」（どの送り方にも入らない＝手で入れる）
 var SHIP_SIZES = [40, 60, 80, 100, 120, 140, 160, SHIP_ANY];
 var SHIP_THICKS = [2, 3, 5, 7, SHIP_ANY];
-var SHIP_WEIGHTS = [1, 2, 5, 10];
+// 🔴 2026-11-06：15・20・25 を足した（前は〜10kg まで＝宅急便120〜160・ゆうパックの重い荷物を選べなかった）。
+//    25kg を超える送り方は表に無い＝札も作らない（手で送料を入れる）
+var SHIP_WEIGHTS = [1, 2, 5, 10, 15, 20, 25];
 // 梱包材の上乗せ（D・ヤフオクの③）。⚠ 金額は仮＝実際と違えば直す
 var SHIP_PACKS = [{ n: "なし", p: 0 }, { n: "袋", p: 30 }, { n: "箱(小)", p: 70 }, { n: "箱(中)", p: 150 }];
 
@@ -919,6 +922,8 @@ function ratesStale(today, on) {
 function shipOf(saved, plat) {
   var ships = (saved && saved.ships) || {};
   if (isNum(ships[plat])) return ships[plat];
+  // 🔴 2026-11-06：自分で空にした（null を覚えている）なら空のまま。前は古い値や 1500 に戻っていた
+  if (Object.prototype.hasOwnProperty.call(ships, plat) && ships[plat] === null) return "";
   if (plat === "yahoo") return 0;
   return (saved && isNum(saved.ship)) ? saved.ship : 1500;   // fees.json の default_shipping_size = medium
 }
@@ -1246,7 +1251,10 @@ function renderShipRow() {
   }
   var nOther = q.cands.others.length;
   show("qMore", nOther > 0);
-  el("qMore").textContent = (quickShowOthers ? "▾ " : "▸ ") + "ほかの送り方 " + nOther + "件";
+  // 🔴 2026-11-06：いちばん安いのが畳んだ側にあるときは、畳んだ行に一言出す（前は開かないと札が見えなかった）
+  var cheapHidden = !quickShowOthers && cheapest && q.cands.others.indexOf(cheapest) >= 0;
+  el("qMore").innerHTML = esc((quickShowOthers ? "▾ " : "▸ ") + "ほかの送り方 " + nOther + "件")
+    + (cheapHidden ? ' <span class="qcheap">（いちばん安い ' + yen(shipTotal(cheapest)) + "円はこちら）</span>" : "");
   show("qOthers", nOther > 0 && quickShowOthers);
   var others = el("qOthers"); others.innerHTML = "";
   q.cands.others.forEach(function (c) { others.appendChild(rowOf(c, c === cheapest)); });
